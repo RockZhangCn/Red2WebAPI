@@ -77,35 +77,66 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-app.UseSession(); // 启用 Session
+app.UseSession();
 app.UseWebSockets();
 
 
-app.MapGet("/zhang", () => "Hello,Zhang");
+app.MapGet("/", () => Results.Ok(new { Success=true, Message="Success."}));
 
-app.MapGet("/todoitems", async (TodoDb db) =>
-    await db.Todos.ToListAsync());
-
-app.MapGet("/todoitems/complete", async (TodoDb db) =>
-    await db.Todos.Where(t => t.IsComplete).ToListAsync());
-
-app.MapGet("/todoitems/{id}", async (int id, TodoDb db) =>
-    await db.Todos.FindAsync(id)
-        is Todo todo
-            ? Results.Ok(todo)
-            : Results.NotFound());
-
-app.MapPost("/register", async (Register user, UserDb db) =>
+app.MapPost("/logout", (HttpContext httpContext, Register user, UserDb db) =>
 {
-    db.Users.Add(user);
-    app.Logger.LogInformation("New register user: " + JsonSerializer.Serialize(user));
+    var exist = db.Users.FirstOrDefault(u => u.Email == user.Email);
+    if (exist != null) {
+        var userDto = new LoginUserDto
+        {
+                Message = "Not exist user, error occured.",
+                Success = false,
+        };
 
-    var userDto = new LoginUserDto
+        return Results.Ok(userDto);
+    } else {
+        var userDto = new LoginUserDto
             {
                 Email = user.Email,
                 Nickname = user.Nickname,
                 Avatar = user.Avatar,
-            };
+                Message = "Logout successful",
+                Success = true,
+            };       
+       
+        if (httpContext != null) {
+            httpContext.Session.Clear(); 
+        }
+        return Results.Ok(userDto);
+    }
+});
+
+app.MapPost("/register", async (Register user, UserDb db) =>
+{
+    var exist = db.Users.FirstOrDefault(u => u.Email == user.Email);
+    if (exist != null) {
+        return Results.Ok(new LoginUserDto
+                            {
+                                Email = user.Email,
+                                Nickname = user.Nickname,
+                                Avatar = user.Avatar,
+                                Success = false,
+                                Message = "Email already exists.",
+                            });
+    }
+
+    db.Users.Add(user);
+    app.Logger.LogInformation("New register user: " + JsonSerializer.Serialize(user));
+
+    var userDto = new LoginUserDto
+    {
+        Email = user.Email,
+        Nickname = user.Nickname,
+        Avatar = user.Avatar,
+        Success = true,
+        Message = "Register successful.",
+    };
+    
     await db.SaveChangesAsync();
     return Results.Ok(userDto);
 });
@@ -125,41 +156,23 @@ app.MapPost("/login", async (HttpContext httpContext, UserDb db) =>
         {
             Email = user.Email,
             Nickname = user.Nickname,
-            Avatar = user.Avatar,
+            Avatar = user.Avatar, 
+            Success = true, 
+            Message = "Login successful.", 
         };
         
-        httpContext.Session.SetString("UserId", user.Id.ToString());
-        return Results.Ok(userDto); // Return the DTO
+        httpContext.Session.SetString("UserId", user.Email);
+        return Results.Ok(userDto);
+    } else {
+        var userDto = new LoginUserDto
+        {
+            Success = false, 
+            Message = "Login failed.", 
+        };
+        return Results.Ok(userDto);
     }
-   
-    return Results.NotFound();
 });
 
-app.MapPut("/todoitems/{id}", async (int id, Todo inputTodo, TodoDb db) =>
-{
-    var todo = await db.Todos.FindAsync(id);
-
-    if (todo is null) return Results.NotFound();
-
-    todo.Name = inputTodo.Name;
-    todo.IsComplete = inputTodo.IsComplete;
-
-    await db.SaveChangesAsync();
-
-    return Results.NoContent();
-});
-
-app.MapDelete("/todoitems/{id}", async (int id, TodoDb db) =>
-{
-    if (await db.Todos.FindAsync(id) is Todo todo)
-    {
-        db.Todos.Remove(todo);
-        await db.SaveChangesAsync();
-        return Results.NoContent();
-    }
-
-    return Results.NotFound();
-});
 
 
 app.Run();

@@ -20,12 +20,14 @@ namespace Red2WebAPI.Models
         // Define a DTO class
     public class LoginUserDto
     {
-        [Required] // Add this line
-        public required string Email { get; set; }
-        [Required] // Add this line
-        public required string Nickname { get; set; }
-        [Required]
-        public required string Avatar { get; set; }
+        public required bool Success { get; set; }
+        public required string Message { get; set; }
+
+        public  string? Email { get; set; }
+
+        public  string? Nickname { get; set; }
+
+        public  string? Avatar { get; set; }
         // Add other properties you want to expose, but exclude the password
     }
 
