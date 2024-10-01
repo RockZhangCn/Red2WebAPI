@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Red2WebAPI.Models;
 using System.Text.Json; // Add this line
+using System.Net.WebSockets; // Add this using directive
 
 // var builder = WebApplication.CreateBuilder(args);
 
@@ -34,8 +35,8 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddOpenApiDocument(config =>
 {
-    config.DocumentName = "TodoAPI";
-    config.Title = "TodoAPI v1";
+    config.DocumentName = "Red2API";
+    config.Title = "Red2API v1";
     config.Version = "v1";
 });
 
@@ -58,10 +59,9 @@ var app = builder.Build();
 
 // Ensure CORS middleware is applied before other middleware
 app.UseCors("AllowOrigin");
-// app.UseCors();
 
-app.UseFileServer();
-app.UseHsts();
+// app.UseFileServer();
+// app.UseHsts();
 app.UseWebSockets();
 app.Logger.LogInformation("The app started");
 
@@ -188,5 +188,51 @@ app.MapPost("/login", async (HttpContext httpContext, UserDb db) =>
 });
 
 
+// Game Playing.
+// verify Seat and table.
+app.Map("/ws_playing", async (HttpContext context, UserDb db) => // Added UserDb parameter
+{
+    if (context.WebSockets.IsWebSocketRequest)
+    {
+        using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+        await Echo(context, webSocket);
+    }
+    else
+    {
+        context.Response.StatusCode = 400; // Bad Request if not a WebSocket request
+    }
+});
+
+// GamePanel broadcast data.
+// Take a Seat
+// Define a WebSocket handler
+app.Map("/ws_hall", async (HttpContext context, UserDb db) => // Added UserDb parameter
+{
+    if (context.WebSockets.IsWebSocketRequest)
+    {
+        using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+        await Echo(context, webSocket);
+    }
+    else
+    {
+        context.Response.StatusCode = 400; // Bad Request if not a WebSocket request
+    }
+});
+
+// WebSocket Echo method
+static async Task Echo(HttpContext context, WebSocket webSocket)
+{
+    var buffer = new byte[1024 * 4];
+    WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+
+    while (!result.CloseStatus.HasValue)
+    {
+        // Echo the received message back to the client
+        await webSocket.SendAsync(new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, CancellationToken.None);
+        result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+    }
+
+    await webSocket.CloseAsync(result.CloseStatus.Value, result.CloseStatusDescription, CancellationToken.None);
+}
 
 app.Run();
