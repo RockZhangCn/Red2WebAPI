@@ -83,23 +83,36 @@ app.UseWebSockets();
 
 app.MapGet("/", () => Results.Ok(new { Success=true, Message="Success."}));
 
-app.MapPost("/logout", (HttpContext httpContext, Register user, UserDb db) =>
+app.MapPost("/logout", async (HttpContext httpContext, UserDb db) =>
 {
-    var exist = db.Users.FirstOrDefault(u => u.Email == user.Email);
-    if (exist != null) {
+    app.Logger.LogInformation("we get into logout here"); 
+    using var reader = new StreamReader(httpContext.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    var jsonData = JsonSerializer.Deserialize<JsonElement>(body);
+  
+    var email = jsonData.GetProperty("email").GetString();
+    var nickname = jsonData.GetProperty("nickname").GetString();
+    var avatar = jsonData.GetProperty("avatar").GetString();
+
+    var exist = db.Users.FirstOrDefault(u => u.Email == email);
+
+    var sessionEmail = httpContext.Session.GetString("UserId");
+    app.Logger.LogInformation("we get session email " + sessionEmail);
+
+    if (exist == null) {
         var userDto = new LoginUserDto
         {
-                Message = "Not exist user, error occured.",
-                Success = false,
+            Message = "Not exist user, error occured.",
+            Success = false,
         };
 
         return Results.Ok(userDto);
     } else {
         var userDto = new LoginUserDto
             {
-                Email = user.Email,
-                Nickname = user.Nickname,
-                Avatar = user.Avatar,
+                Email = email,
+                Nickname = nickname,
+                Avatar = avatar,
                 Message = "Logout successful",
                 Success = true,
             };       
@@ -109,6 +122,7 @@ app.MapPost("/logout", (HttpContext httpContext, Register user, UserDb db) =>
         }
         return Results.Ok(userDto);
     }
+
 });
 
 app.MapPost("/register", async (Register user, UserDb db) =>
