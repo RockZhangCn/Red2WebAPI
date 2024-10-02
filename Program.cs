@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Red2WebAPI.Models;
 using System.Text.Json; // Add this line
 using System.Net.WebSockets; // Add this using directive
+using System.Text; // Added for Encoding
 
 // var builder = WebApplication.CreateBuilder(args);
 
@@ -20,7 +21,6 @@ Console.WriteLine($"ContentRoot Path: {builder.Environment.ContentRootPath}");
 Console.WriteLine($"WebRootPath: {builder.Environment.WebRootPath}");
 
 
-builder.Services.AddDbContext<TodoDb>(opt => opt.UseInMemoryDatabase("TodoList"));
 builder.Services.AddDbContext<UserDb>(opt => opt.UseInMemoryDatabase("UserDb"));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 builder.Services.AddEndpointsApiExplorer();
@@ -43,10 +43,17 @@ builder.Services.AddOpenApiDocument(config =>
 builder.Services.AddDistributedMemoryCache(); // 使用内存缓存
 builder.Services.AddSession(options =>
 {
-    options.IdleTimeout = TimeSpan.FromMinutes(30); // 设置过期时间
+    options.IdleTimeout = TimeSpan.FromMinutes(300); // 设置过期时间
     options.Cookie.HttpOnly = true; // 只能通过 HTTP 访问
     options.Cookie.IsEssential = true; // 在 GDPR 下的设置
 });
+
+builder.Services.AddLogging();
+builder.Logging.AddConsole(); // Add this line to configure console logging
+
+// // Add ILogger service to the DI container
+// builder.Services.AddSingleton<ILogger<YourClassName>>(provider => 
+//     provider.GetRequiredService<ILoggerFactory>().CreateLogger<YourClassName>());
 
 builder.Services.AddControllersWithViews()
     .AddJsonOptions(options =>
@@ -90,9 +97,23 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDb db) =>
     var body = await reader.ReadToEndAsync();
     var jsonData = JsonSerializer.Deserialize<JsonElement>(body);
   
-    var email = jsonData.GetProperty("email").GetString();
-    var nickname = jsonData.GetProperty("nickname").GetString();
-    var avatar = jsonData.GetProperty("avatar").GetString();
+    var email = "None";
+    var nickname = "null";
+    var avatar = "null";
+    //TODO removed after client get correct logics.
+    try {
+        email = jsonData.GetProperty("email").GetString();
+        nickname = jsonData.GetProperty("nickname").GetString();
+        avatar = jsonData.GetProperty("avatar").GetString();
+    } catch (KeyNotFoundException) {
+        var userDto = new LoginUserDto
+        {
+            Message = "Not exist user, error occured.",
+            Success = false,
+        };
+
+        return Results.Ok(userDto);
+    }
 
     var exist = db.Users.FirstOrDefault(u => u.Email == email);
 
@@ -122,7 +143,6 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDb db) =>
         }
         return Results.Ok(userDto);
     }
-
 });
 
 app.MapPost("/register", async (Register user, UserDb db) =>
@@ -195,7 +215,7 @@ app.Map("/ws_playing", async (HttpContext context, UserDb db) => // Added UserDb
     if (context.WebSockets.IsWebSocketRequest)
     {
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-        await Echo(context, webSocket);
+        await BroadCastHallData(app, context, webSocket);
     }
     else
     {
@@ -211,7 +231,8 @@ app.Map("/ws_hall", async (HttpContext context, UserDb db) => // Added UserDb pa
     if (context.WebSockets.IsWebSocketRequest)
     {
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-        await Echo(context, webSocket);
+        app.Logger.LogInformation("Current table size " + await db.Tables.CountAsync());
+        await BroadCastHallData(app, context, webSocket);
     }
     else
     {
@@ -219,14 +240,84 @@ app.Map("/ws_hall", async (HttpContext context, UserDb db) => // Added UserDb pa
     }
 });
 
-// WebSocket Echo method
-static async Task Echo(HttpContext context, WebSocket webSocket)
+static async Task BroadCastHallData(WebApplication app, HttpContext context, WebSocket webSocket)
 {
+    // Periodic data sending
+    var cancellationTokenSource = new CancellationTokenSource();
+    _ = Task.Run(async () =>
+    {
+        while (!cancellationTokenSource.Token.IsCancellationRequested)
+        {
+            const string message = @"[
+                {
+                    ""tableIdx"": 1,
+                    ""tableUsers"": [
+                        { ""pos"": 1, ""avatar"": ""/avatar/icon_1.png"", ""nickname"": ""user1"" },
+                        { ""pos"": 2, ""avatar"": ""/avatar/icon_4.png"", ""nickname"": ""user2"" },
+                        { ""pos"": 3, ""avatar"": ""/avatar/icon_14.png"", ""nickname"": ""user3"" },
+                        { ""pos"": 4, ""avatar"": ""/avatar/icon_24.png"", ""nickname"": ""user4"" }
+                    ]
+                },
+                {     
+                    ""tableIdx"": 2, 
+                    ""tableUsers"": [      
+                        { ""pos"": 1, ""avatar"": ""/avatar/icon_5.png"", ""nickname"": ""user1"" },
+                        { ""pos"": 2, ""avatar"": ""/avatar/icon_19.png"", ""nickname"": ""user2"" },
+                        { ""pos"": 3, ""avatar"": ""/avatar/icon_9.png"", ""nickname"": ""user3"" },
+                        { ""pos"": 4, ""avatar"": ""/avatar/icon_4.png"", ""nickname"": ""user4"" }
+                    ]
+                },
+                {
+                    ""tableIdx"": 3,
+                    ""tableUsers"": [
+                        { ""pos"": 1, ""avatar"": ""/avatar/icon_13.png"", ""nickname"": ""user1"" },
+                        { ""pos"": 2, ""avatar"": ""/avatar/icon_6.png"", ""nickname"": ""user2"" },
+                        { ""pos"": 4, ""avatar"": ""/avatar/icon_22.png"", ""nickname"": ""user4"" }
+                    ]
+                },
+                {
+                    ""tableIdx"": 4,
+                    ""tableUsers"": []
+                },
+                {
+                    ""tableIdx"": 5,
+                    ""tableUsers"": [
+                        { ""pos"": 2, ""avatar"": ""/avatar/icon_7.png"", ""nickname"": ""user2"" }
+                    ]
+                },
+                {
+                    ""tableIdx"": 6,
+                    ""tableUsers"": []
+                },
+                {
+                    ""tableIdx"": 7,
+                    ""tableUsers"": [
+                        { ""pos"": 1, ""avatar"": ""/avatar/icon_13.png"", ""nickname"": ""user1"" },
+                        { ""pos"": 2, ""avatar"": ""/avatar/icon_6.png"", ""nickname"": ""user2"" },
+                        { ""pos"": 4, ""avatar"": ""/avatar/icon_22.png"", ""nickname"": ""user4"" }
+                    ]
+                },
+                {
+                    ""tableIdx"": 8,
+                    ""tableUsers"": []
+                }
+            ]";
+
+            var messageBuffer = Encoding.UTF8.GetBytes(message);
+            await webSocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+            await Task.Delay(2000); // Send every 2 seconds
+        }
+    });
+
     var buffer = new byte[1024 * 4];
     WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-
+    
     while (!result.CloseStatus.HasValue)
     {
+        // Print the received content
+        var receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
+        app.Logger.LogInformation($"Received message: {receivedMessage}"); // Log the received message
+
         // Echo the received message back to the client
         await webSocket.SendAsync(new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, CancellationToken.None);
         result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
