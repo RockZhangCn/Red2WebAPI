@@ -232,7 +232,7 @@ app.Map("/ws_hall", async (HttpContext context, UserDb db) => // Added UserDb pa
     {
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
         app.Logger.LogInformation("Current table size " + await db.Tables.CountAsync());
-        await BroadCastHallData(app, context, webSocket);
+        await BroadCastHallData(app, context, webSocket, UserDb);
     }
     else
     {
@@ -240,7 +240,7 @@ app.Map("/ws_hall", async (HttpContext context, UserDb db) => // Added UserDb pa
     }
 });
 
-static async Task BroadCastHallData(WebApplication app, HttpContext context, WebSocket webSocket)
+static async Task BroadCastHallData(WebApplication app, HttpContext context, WebSocket webSocket, UserDb userDb)
 {
     // Periodic data sending
     var cancellationTokenSource = new CancellationTokenSource();
@@ -248,64 +248,107 @@ static async Task BroadCastHallData(WebApplication app, HttpContext context, Web
     {
         while (!cancellationTokenSource.Token.IsCancellationRequested)
         {
-            const string message = @"[
+            var data = new[]
+            {
+                new
                 {
-                    ""tableIdx"": 1,
-                    ""tableUsers"": [
-                        { ""pos"": 1, ""avatar"": ""/avatar/icon_1.png"", ""nickname"": ""user1"" },
-                        { ""pos"": 2, ""avatar"": ""/avatar/icon_4.png"", ""nickname"": ""user2"" },
-                        { ""pos"": 3, ""avatar"": ""/avatar/icon_14.png"", ""nickname"": ""user3"" },
-                        { ""pos"": 4, ""avatar"": ""/avatar/icon_24.png"", ""nickname"": ""user4"" }
-                    ]
+                    tableIdx = 1,
+                    tableUsers = new[]
+                    {
+                        new { pos = 1, avatar = "/avatar/icon_1.png", nickname = "user1" },
+                        new { pos = 2, avatar = "/avatar/icon_4.png", nickname = "user2" },
+                        new { pos = 3, avatar = "/avatar/icon_14.png", nickname = "user3" },
+                        new { pos = 4, avatar = "/avatar/icon_24.png", nickname = "user4" }
+                    }
                 },
-                {     
-                    ""tableIdx"": 2, 
-                    ""tableUsers"": [      
-                        { ""pos"": 1, ""avatar"": ""/avatar/icon_5.png"", ""nickname"": ""user1"" },
-                        { ""pos"": 2, ""avatar"": ""/avatar/icon_19.png"", ""nickname"": ""user2"" },
-                        { ""pos"": 3, ""avatar"": ""/avatar/icon_9.png"", ""nickname"": ""user3"" },
-                        { ""pos"": 4, ""avatar"": ""/avatar/icon_4.png"", ""nickname"": ""user4"" }
-                    ]
-                },
+                new
                 {
-                    ""tableIdx"": 3,
-                    ""tableUsers"": [
-                        { ""pos"": 1, ""avatar"": ""/avatar/icon_13.png"", ""nickname"": ""user1"" },
-                        { ""pos"": 2, ""avatar"": ""/avatar/icon_6.png"", ""nickname"": ""user2"" },
-                        { ""pos"": 4, ""avatar"": ""/avatar/icon_22.png"", ""nickname"": ""user4"" }
-                    ]
+                    tableIdx = 2,
+                    tableUsers = new[]
+                    {
+                        new { pos = 1, avatar = "/avatar/icon_8.png", nickname = "user1" },
+                        new { pos = 2, avatar = "/avatar/icon_19.png", nickname = "user2" },
+                        new { pos = 3, avatar = "/avatar/icon_3.png", nickname = "user3" },
+                        new { pos = 4, avatar = "/avatar/icon_14.png", nickname = "user4" }
+                    }
                 },
-                {
-                    ""tableIdx"": 4,
-                    ""tableUsers"": []
-                },
-                {
-                    ""tableIdx"": 5,
-                    ""tableUsers"": [
-                        { ""pos"": 2, ""avatar"": ""/avatar/icon_7.png"", ""nickname"": ""user2"" }
-                    ]
-                },
-                {
-                    ""tableIdx"": 6,
-                    ""tableUsers"": []
-                },
-                {
-                    ""tableIdx"": 7,
-                    ""tableUsers"": [
-                        { ""pos"": 1, ""avatar"": ""/avatar/icon_13.png"", ""nickname"": ""user1"" },
-                        { ""pos"": 2, ""avatar"": ""/avatar/icon_6.png"", ""nickname"": ""user2"" },
-                        { ""pos"": 4, ""avatar"": ""/avatar/icon_22.png"", ""nickname"": ""user4"" }
-                    ]
-                },
-                {
-                    ""tableIdx"": 8,
-                    ""tableUsers"": []
-                }
-            ]";
 
-            var messageBuffer = Encoding.UTF8.GetBytes(message);
+                new
+                {
+                    tableIdx = 3,
+                    tableUsers = new[]
+                    {
+                        new { pos = 1, avatar = "/avatar/icon_15.png", nickname = "user1" },
+                        new { pos = 2, avatar = "/avatar/icon_9.png", nickname = "user2" },
+                        
+                        new { pos = 4, avatar = "/avatar/icon_14.png", nickname = "user4" }
+                    }
+                },
+
+                new
+                {
+                    tableIdx = 4,
+                    tableUsers = new[]
+                    {
+                       
+                        new { pos = 2, avatar = "/avatar/icon_19.png", nickname = "user2" },
+                        new { pos = 3, avatar = "/avatar/icon_5.png", nickname = "user3" },
+                        new { pos = 4, avatar = "/avatar/icon_4.png", nickname = "user4" }
+                    }
+                },
+
+                new
+                {
+                    tableIdx = 5,
+                    tableUsers = new[]
+                    {
+                        new { pos = 1, avatar = "/avatar/icon_5.png", nickname = "user1" },
+                        new { pos = 3, avatar = "/avatar/icon_4.png", nickname = "user3" },
+                        new { pos = 4, avatar = "/avatar/icon_2.png", nickname = "user4" }
+                    }
+                },
+
+                new
+                {
+                    tableIdx = 6,
+                    tableUsers = new[]
+                    { 
+                        new { pos = 3, avatar = "/avatar/icon_6.png", nickname = "user3" },
+                    }
+                },
+
+                  new
+                {
+                    tableIdx = 7,
+                    tableUsers = new[]
+                    {
+                        new { pos = 3, avatar = "/avatar/icon_4.png", nickname = "user3" },
+                    }
+                },
+
+                new
+                {
+                    tableIdx = 8,
+                    tableUsers = new[]
+                    {
+                        new { pos = 3, avatar = "/avatar/icon_19.png", nickname = "user3" },
+                    }
+                },
+                // ... add other tables similarly
+            };
+
+            var jsonObject = new
+            {
+                Type = "BroadCast",
+                Data = data // Use the object array here
+            };
+
+            // Serialize the object to a JSON string
+            string jsonString = JsonSerializer.Serialize(jsonObject);
+
+            var messageBuffer = Encoding.UTF8.GetBytes(jsonString);
             await webSocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
-            await Task.Delay(2000); // Send every 2 seconds
+            await Task.Delay(5000); // Send every 5 seconds
         }
     });
 
@@ -316,8 +359,9 @@ static async Task BroadCastHallData(WebApplication app, HttpContext context, Web
     {
         // Print the received content
         var receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
-        app.Logger.LogInformation($"Received message: {receivedMessage}"); // Log the received message
-
+        app.Logger.LogInformation($"Received client message: {receivedMessage}"); // Log the received message
+        // "TAKESEAT"
+        
         // Echo the received message back to the client
         await webSocket.SendAsync(new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, CancellationToken.None);
         result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);

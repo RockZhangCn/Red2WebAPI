@@ -4,7 +4,7 @@ namespace Red2WebAPI.Models
 {
     class GameHallDb : DbContext
     {
-        public GameHallDb(DbContextOptions<UserDb> options)
+        public GameHallDb(DbContextOptions<GameHallDb> options)
             : base(options) { 
                 
             }
