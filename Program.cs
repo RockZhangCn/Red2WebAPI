@@ -3,7 +3,9 @@ using Red2WebAPI.Models;
 using System.Text.Json; // Add this line
 using System.Net.WebSockets; // Add this using directive
 using System.Text; // Added for Encoding
-
+using Red2WebAPI.Seed;
+using Red2WebAPI.Communication;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
 // var builder = WebApplication.CreateBuilder(args);
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -117,8 +119,8 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db) =>
 
     var exist = db.Users.FirstOrDefault(u => u.Email == email);
 
-    var sessionEmail = httpContext.Session.GetString("UserId");
-    app.Logger.LogInformation("we get session email " + sessionEmail);
+    // var sessionEmail = httpContext.Session.GetString("UserId");
+    // app.Logger.LogInformation("we get session email " + sessionEmail);
 
     if (exist == null) {
         var userDto = new LoginUserDto
@@ -207,7 +209,7 @@ app.MapPost("/login", async (HttpContext httpContext, UserDbContext db) =>
                 Message = "Login successful.", 
             };
             
-            httpContext.Session.SetString("UserId", user.Email);
+            httpContext.Session.SetInt32("UserId", user.Id);
             return Results.Ok(userDtoSuccess);
         }
     } 
@@ -246,6 +248,9 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
     {
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
         app.Logger.LogInformation("Current table size " + await db.Tables.CountAsync());
+        
+        ActiveWebSockets.AddSocket(context.Session.GetInt32("UserId")?? 0, webSocket);
+
         await BroadCastHallData(app, context, webSocket, db);
     }
     else
@@ -254,104 +259,34 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
     }
 });
 
+
+
 static async Task BroadCastHallData(WebApplication app, HttpContext context, 
-                                    WebSocket webSocket, GameTableDbContext userDb)
+                                    WebSocket webSocket, GameTableDbContext gameTableDb)
 {
+    SemaphoreSlim semaphore = new SemaphoreSlim(1, 1); 
+    List<WebSocket> allPlayers = new List<WebSocket>();
+
     // Periodic data sending
     var cancellationTokenSource = new CancellationTokenSource();
+
     _ = Task.Run(async () =>
     {
         while (!cancellationTokenSource.Token.IsCancellationRequested)
         {
-            var data = new[]
+            await semaphore.WaitAsync();
+            var data = await gameTableDb.Tables
+            .Select(table => new
             {
-                new
+                tableIdx = table.TableId, // Assuming TableId is the identifier for the table
+                tableUsers = table.Players.Select(player => new
                 {
-                    tableIdx = 1,
-                    tableUsers = new[]
-                    {
-                        new { pos = 1, avatar = 1, nickname = "user1" },
-                        new { pos = 2, avatar = 4, nickname = "user2" },
-                        new { pos = 3, avatar = 14, nickname = "user3" },
-                        new { pos = 4, avatar = 24, nickname = "user4" }
-                    }
-                },
-                new
-                {
-                    tableIdx = 2,
-                    tableUsers = new[]
-                    {
-                        new { pos = 1, avatar = 8, nickname = "user1" },
-                        new { pos = 2, avatar = 9, nickname = "user2" },
-                        new { pos = 3, avatar = 3, nickname = "user3" },
-                        new { pos = 4, avatar = 14, nickname = "user4" }
-                    }
-                },
-
-                new
-                {
-                    tableIdx = 3,
-                    tableUsers = new[]
-                    {
-                        new { pos = 1, avatar = 15, nickname = "user1" },
-                        new { pos = 2, avatar = 9, nickname = "user2" },
-                        
-                        new { pos = 4, avatar = 14, nickname = "user4" }
-                    }
-                },
-
-                new
-                {
-                    tableIdx = 4,
-                    tableUsers = new[]
-                    {
-                       
-                        new { pos = 2, avatar = 19, nickname = "user2" },
-                        new { pos = 3, avatar = 5, nickname = "user3" },
-                        new { pos = 4, avatar = 4, nickname = "user4" }
-                    }
-                },
-
-                new
-                {
-                    tableIdx = 5,
-                    tableUsers = new[]
-                    {
-                        new { pos = 1, avatar = 5, nickname = "user1" },
-                        new { pos = 3, avatar = 4, nickname = "user3" },
-                        new { pos = 4, avatar = 2, nickname = "user4" }
-                    }
-                },
-
-                new
-                {
-                    tableIdx = 6,
-                    tableUsers = new[]
-                    { 
-                        new { pos = 3, avatar = 6, nickname = "user3" },
-                    }
-                },
-
-                  new
-                {
-                    tableIdx = 7,
-                    tableUsers = new[]
-                    {
-                        new { pos = 3, avatar = 4, nickname = "user3" },
-                    }
-                },
-
-                new
-                {
-                    tableIdx = 8,
-                    tableUsers = new[]
-                    {
-                        new { pos = 3, avatar = 19, nickname = "user3" },
-                    }
-                },
-                // ... add other tables similarly
-            };
-
+                    pos = player.Pos,
+                    avatar = player.AvatarId, // Assuming AvatarId is the property for avatar
+                    nickname = player.Nickname
+                }).ToArray()
+            }).ToArrayAsync();
+           
             var jsonObject = new
             {
                 Type = "BroadCast",
@@ -363,7 +298,6 @@ static async Task BroadCastHallData(WebApplication app, HttpContext context,
 
             var messageBuffer = Encoding.UTF8.GetBytes(jsonString);
             await webSocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
-            await Task.Delay(5000); // Send every 5 seconds
         }
     });
 
@@ -377,12 +311,80 @@ static async Task BroadCastHallData(WebApplication app, HttpContext context,
         app.Logger.LogInformation($"Received client message: {receivedMessage}"); // Log the received message
         // "TAKESEAT"
 
-        // Echo the received message back to the client
-        await webSocket.SendAsync(new ArraySegment<byte>(buffer, 0, result.Count), result.MessageType, result.EndOfMessage, CancellationToken.None);
+        var clientMessage = JsonSerializer.Deserialize<ClientMessage>(receivedMessage);
+
+        var replyResult = false;
+        var replyMsg = "";
+        string replyJsonString;
+        if (clientMessage != null && clientMessage.Action == "TAKESEAT") {
+            var tableIdx = clientMessage.TableIdx;
+            var pos = clientMessage.Pos;
+            var table = await gameTableDb.Tables.FirstOrDefaultAsync(table => table.TableId == tableIdx);
+            if (table != null) {
+                var player = table.Players.FirstOrDefault(p => p.Pos == pos); // Changed to use FirstOrDefault
+
+                if (player == null) {
+                    var id = context.Session.GetInt32("UserId");
+                    var newPlayer = new Player{
+                        UserId = id ?? -1,
+                    
+                        AvatarId = clientMessage.Avatar,
+                        Nickname =  clientMessage.NickName,
+                        TableId =  tableIdx,
+                        Pos = pos,
+                        GameTable = table,
+                    };
+
+                    table.Players.Add(newPlayer);
+                    gameTableDb.SaveChanges();
+                    semaphore.Release();
+                    replyResult = true;
+
+                } else {
+                    replyResult = false;
+                    replyMsg = "Alread seated.";
+                }
+
+            } else {
+                replyResult = false;
+                replyMsg = "Invalid Table.";
+            }
+
+            var replyObj = new ServerMessage{
+                Type = "REPLY",
+                Result = replyResult,
+                Message = replyMsg,
+            };
+
+            replyJsonString = JsonSerializer.Serialize(replyObj);
+        } else {
+            replyJsonString = "Ts";
+        }
+         // Send the replyJsonString back to the client
+        var replyMessageBuffer = Encoding.UTF8.GetBytes(replyJsonString);
+        app.Logger.LogInformation("We reply to client message " + replyJsonString);
+
+        await webSocket.SendAsync(new ArraySegment<byte>(replyMessageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+            
         result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
     }
-
-    await webSocket.CloseAsync(result.CloseStatus.Value, result.CloseStatusDescription, CancellationToken.None);
 }
+
+// New async method to run a loop
+static async Task RunAsyncLoop(CancellationToken cancellationToken)
+{
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        // Your loop logic here
+        
+        await Task.Delay(1000); // Example: wait for 1 second
+    }
+}
+
+// In your existing code, invoke the async loop
+var cancellationTokenSource = new CancellationTokenSource();
+_ = RunAsyncLoop(cancellationTokenSource.Token); // Start the async loop
+
+Extensions.CreateDbIfNotExists(app);
 
 app.Run();

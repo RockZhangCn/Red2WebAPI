@@ -6,8 +6,17 @@ namespace Red2WebAPI.Models
     {
         public int Id { get; set; }
 
+        public required int TableId { get; set; }
+
         public List<Player> Players{ get; set; } = new List<Player>();
 
-        public int GameStatus { get; set;}
+        public required GameStatus GameStatus { get; set;}
+    
+    }
+
+    public enum GameStatus {
+        WAITING = 1,
+        INPROGRESS,
+        END,
     }
 }

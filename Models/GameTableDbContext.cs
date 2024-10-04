@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Red2WebAPI.Models
 {
-    class GameTableDbContext : DbContext
+    public class GameTableDbContext : DbContext
     {
         public GameTableDbContext(DbContextOptions<GameTableDbContext> options)
             : base(options) { 
