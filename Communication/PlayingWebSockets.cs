@@ -8,15 +8,15 @@ namespace Red2WebAPI.Communication
 
 
 
-        static Dictionary<int, List<WebSocket?>> PlayingSockets = new Dictionary<int, List<WebSocket?>>();
+        static Dictionary<int, WebSocket?[]> PlayingSockets = new Dictionary<int, WebSocket?[]>();
         private static readonly object _lock = new object(); // Lock object
 
         public static void AddSocket(int tableIdx, int pos, WebSocket webSocket) {
             lock (_lock) {
                 if (!PlayingSockets.ContainsKey(tableIdx)) {
-                    PlayingSockets[tableIdx] = new List<WebSocket?>(4); // Create a new list if it doesn't exist
+                    PlayingSockets[tableIdx] = new WebSocket?[4]; // Define an array of size 4
                 }
-                PlayingSockets[tableIdx][pos] = webSocket; // Add the new WebSocket to the list
+                PlayingSockets[tableIdx][pos] = webSocket; // Directly access index 3
             }
         }
 
@@ -28,7 +28,7 @@ namespace Red2WebAPI.Communication
             }
         }
 
-        public static List<WebSocket?>? GetTableWebSockets(int tableIdx) {
+        public static WebSocket?[]? GetTableWebSockets(int tableIdx) {
             lock (_lock) {
                 if (PlayingSockets.TryGetValue(tableIdx, out var socketList)) {
                     return socketList; // Return the socketList if it exists

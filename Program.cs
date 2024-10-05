@@ -95,7 +95,6 @@ app.MapGet("/", () => Results.Ok(new { Success=true, Message="Success."}));
 app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db, 
                                         GameTableDbContext gameTableDb) =>
 {
-    app.Logger.LogInformation("we get into logout here"); 
     using var reader = new StreamReader(httpContext.Request.Body);
     var body = await reader.ReadToEndAsync();
     var jsonData = JsonSerializer.Deserialize<JsonElement>(body);
@@ -111,7 +110,7 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db,
     } catch (KeyNotFoundException) {
         var userDto = new LoginUserDto
         {
-            Message = "Not exist user, error occured.",
+            Message = "No exist user, error occured.",
             Success = false,
         };
 
@@ -147,6 +146,11 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db,
             if (userTable.HasValue && userPos.HasValue) {
                 var userId = httpContext.Session.GetInt32("UserId");
                 var oldTable = await gameTableDb.Tables.FirstOrDefaultAsync(table => table.TableId == userTable);
+
+                if (oldTable != null) {
+                    // Ensure the players are fetched from the database after any changes
+                    await gameTableDb.Entry(oldTable).Collection(t => t.Players).LoadAsync(); // Load players again
+                }
                 // Check if table is not null before accessing Players
                 var oldPlayer = oldTable?.Players?.Find(p => p.Pos == userPos);
                 
@@ -156,6 +160,7 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db,
                 }
             }
             // clear End.
+            app.Logger.LogInformation("We logout now");
 
             gameTableDb.SaveChanges();
 
@@ -312,16 +317,12 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
     var currentTable = context.Session.GetInt32("UserTableId");
     var currentPos = context.Session.GetInt32("UserTablePos");
+
+    app.Logger.LogInformation("RoomWebSocketHandler close websocket table " + $"{currentTable} pos {currentPos}");
     if (currentTable.HasValue && currentPos.HasValue) {
         PlayingWebSockets.RemoveSocket(currentTable.Value, currentPos.Value);
     }
-    // Client close it's socket here.
-    
-    // var userTable1 = context.Session.GetInt32("UserTableId");
-    // var userPos1 = context.Session.GetInt32("UserTablePos");
-    // app.Logger.LogInformation("User close the websocket in pos " + userTable1 + " " + userPos1);
-    // await BroadCastHallStatus(gameTableDb, app.Logger);
-
+   
 }
 
 // GamePanel broadcast data.
@@ -446,7 +447,7 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
     ActiveWebSockets.RemoveSocket(context.Session.GetInt32("UserId")?? 0);
     var userTable1 = context.Session.GetInt32("UserTableId");
     var userPos1 = context.Session.GetInt32("UserTablePos");
-    app.Logger.LogInformation("User close the websocket in pos " + userTable1 + " " + userPos1);
+    app.Logger.LogInformation("User close the websocket in table " + userTable1 + " pos " + userPos1);
     await BroadCastHallStatus(gameTableDb, app.Logger);
 }
 
