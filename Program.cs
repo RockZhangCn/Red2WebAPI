@@ -92,7 +92,8 @@ app.UseWebSockets();
 
 app.MapGet("/", () => Results.Ok(new { Success=true, Message="Success."}));
 
-app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db) =>
+app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db, 
+                                        GameTableDbContext gameTableDb) =>
 {
     app.Logger.LogInformation("we get into logout here"); 
     using var reader = new StreamReader(httpContext.Request.Body);
@@ -119,9 +120,6 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db) =>
 
     var exist = db.Users.FirstOrDefault(u => u.Email == email);
 
-    // var sessionEmail = httpContext.Session.GetString("UserId");
-    // app.Logger.LogInformation("we get session email " + sessionEmail);
-
     if (exist == null) {
         var userDto = new LoginUserDto
         {
@@ -141,6 +139,26 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db) =>
             };       
        
         if (httpContext != null) {
+            ActiveWebSockets.RemoveSocket(httpContext.Session.GetInt32("UserId")?? 0);
+            
+            // clear your position in database.
+            var userTable = httpContext.Session.GetInt32("UserTableId");
+            var userPos = httpContext.Session.GetInt32("UserTablePos");
+            if (userTable.HasValue && userPos.HasValue) {
+                var userId = httpContext.Session.GetInt32("UserId");
+                var oldTable = await gameTableDb.Tables.FirstOrDefaultAsync(table => table.TableId == userTable);
+                // Check if table is not null before accessing Players
+                var oldPlayer = oldTable?.Players?.Find(p => p.Pos == userPos);
+                
+                if (oldPlayer != null) {
+                    app.Logger.LogInformation("We clear position " + userTable + "" + userPos);
+                    oldTable?.Players?.Remove(oldPlayer);
+                }
+            }
+            // clear End.
+
+            gameTableDb.SaveChanges();
+
             httpContext.Session.Clear(); 
         }
         return Results.Ok(userDto);
@@ -231,7 +249,7 @@ app.Map("/ws_playing", async (HttpContext context, GameTableDbContext db) => // 
     if (context.WebSockets.IsWebSocketRequest)
     {
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-        await BroadCastHallData(app, context, webSocket, db);
+        await WebSocketHandler(app, context, webSocket, db);
     }
     else
     {
@@ -247,11 +265,12 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
     if (context.WebSockets.IsWebSocketRequest)
     {
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-        app.Logger.LogInformation("Current table size " + await db.Tables.CountAsync());
+        //app.Logger.LogInformation("Current table size " + await db.Tables.CountAsync());
         
         ActiveWebSockets.AddSocket(context.Session.GetInt32("UserId")?? 0, webSocket);
-
-        await BroadCastHallData(app, context, webSocket, db);
+        
+        await BroadCastHallStatus(db, app.Logger);
+        await WebSocketHandler(app, context, webSocket, db);
     }
     else
     {
@@ -259,48 +278,9 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
     }
 });
 
-
-
-static async Task BroadCastHallData(WebApplication app, HttpContext context, 
+static async Task WebSocketHandler(WebApplication app, HttpContext context, 
                                     WebSocket webSocket, GameTableDbContext gameTableDb)
 {
-    SemaphoreSlim semaphore = new SemaphoreSlim(1, 1); 
-    List<WebSocket> allPlayers = new List<WebSocket>();
-
-    // Periodic data sending
-    var cancellationTokenSource = new CancellationTokenSource();
-
-    _ = Task.Run(async () =>
-    {
-        while (!cancellationTokenSource.Token.IsCancellationRequested)
-        {
-            await semaphore.WaitAsync();
-            var data = await gameTableDb.Tables
-            .Select(table => new
-            {
-                tableIdx = table.TableId, // Assuming TableId is the identifier for the table
-                tableUsers = table.Players.Select(player => new
-                {
-                    pos = player.Pos,
-                    avatar = player.AvatarId, // Assuming AvatarId is the property for avatar
-                    nickname = player.Nickname
-                }).ToArray()
-            }).ToArrayAsync();
-           
-            var jsonObject = new
-            {
-                Type = "BroadCast",
-                Data = data // Use the object array here
-            };
-
-            // Serialize the object to a JSON string
-            string jsonString = JsonSerializer.Serialize(jsonObject);
-
-            var messageBuffer = Encoding.UTF8.GetBytes(jsonString);
-            await webSocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
-        }
-    });
-
     var buffer = new byte[1024 * 4];
     WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
     
@@ -336,8 +316,34 @@ static async Task BroadCastHallData(WebApplication app, HttpContext context,
                     };
 
                     table.Players.Add(newPlayer);
+
+                    // clear old pos
+                    var userTable = context.Session.GetInt32("UserTableId");
+                    var userPos = context.Session.GetInt32("UserTablePos");
+                    app.Logger.LogInformation("We get saved position " + userTable + "" + userPos);
+                    if (userTable.HasValue && userPos.HasValue) {
+                        var userId = context.Session.GetInt32("UserId");
+                        var oldTable = await gameTableDb.Tables.FirstOrDefaultAsync(table => table.TableId == userTable);
+                        if (oldTable != null) {
+                            // Ensure the players are fetched from the database after any changes
+                            await gameTableDb.Entry(oldTable).Collection(t => t.Players).LoadAsync(); // Load players again
+                        }
+                        // Check if table is not null before accessing Players
+                        var oldPlayer = oldTable?.Players?.FirstOrDefault(p => p.Pos == userPos);
+                        
+                        if (oldPlayer != null) {
+                            app.Logger.LogInformation("We clear position " + userTable + "" + userPos);
+                            oldTable?.Players?.Remove(oldPlayer);
+                        } else {
+                            app.Logger.LogWarning("We failed clear position " + userTable + "" + userPos);
+                        }
+                    }
+                    // clear end.
+                    context.Session.SetInt32("UserTableId", tableIdx);
+                    context.Session.SetInt32("UserTablePos", pos);
+                    app.Logger.LogInformation("We saved position " + tableIdx + "" + pos);
+                    
                     gameTableDb.SaveChanges();
-                    semaphore.Release();
                     replyResult = true;
 
                 } else {
@@ -368,22 +374,53 @@ static async Task BroadCastHallData(WebApplication app, HttpContext context,
             
         result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
     }
+
+    // Client close it's socket here.
+    ActiveWebSockets.RemoveSocket(context.Session.GetInt32("UserId")?? 0);
+    var userTable1 = context.Session.GetInt32("UserTableId");
+    var userPos1 = context.Session.GetInt32("UserTablePos");
+    app.Logger.LogInformation("User close the websocket in pos " + userTable1 + " " + userPos1);
+    await BroadCastHallStatus(gameTableDb, app.Logger);
 }
 
 // New async method to run a loop
-static async Task RunAsyncLoop(CancellationToken cancellationToken)
+static async Task BroadCastHallStatus(GameTableDbContext gameTableDb, ILogger logger)
 {
-    while (!cancellationToken.IsCancellationRequested)
+    // lock(ActiveWebSockets.condtionLockObject) {
+    //     while (!ActiveWebSockets.conditionBroadCast)
+    //     {
+    //         Monitor.Wait(ActiveWebSockets.condtionLockObject); // 等待条件满足
+    //     }
+    // }
+
+    var websockets = ActiveWebSockets.GetAllSockets();// Your loop logic here
+    var data = await gameTableDb.Tables
+    .Select(table => new
     {
-        // Your loop logic here
-        
-        await Task.Delay(1000); // Example: wait for 1 second
+        tableIdx = table.TableId, // Assuming TableId is the identifier for the table
+        tableUsers = table.Players.Select(player => new
+        {
+            pos = player.Pos,
+            avatar = player.AvatarId, // Assuming AvatarId is the property for avatar
+            nickname = player.Nickname
+        }).ToArray()
+    }).ToArrayAsync();
+    
+    var jsonObject = new
+    {
+        Type = "BroadCast",
+        Data = data // Use the object array here
+    };
+
+    // Serialize the object to a JSON string
+    string jsonString = JsonSerializer.Serialize(jsonObject);
+
+    var messageBuffer = Encoding.UTF8.GetBytes(jsonString);
+    logger.LogInformation("We begin to broadcast data to all users " + websockets.Count + " " + jsonString);
+    foreach (WebSocket websocket in websockets) {
+        await websocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
     }
 }
-
-// In your existing code, invoke the async loop
-var cancellationTokenSource = new CancellationTokenSource();
-_ = RunAsyncLoop(cancellationTokenSource.Token); // Start the async loop
 
 Extensions.CreateDbIfNotExists(app);
 
