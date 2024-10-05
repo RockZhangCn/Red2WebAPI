@@ -241,7 +241,29 @@ app.MapPost("/login", async (HttpContext httpContext, UserDbContext db) =>
     
 });
 
+static async Task BroadRoomStatus(WebApplication app, HttpContext context, int tableIdx,
+                                    GameTableDbContext gameTableDb) {
+    var websockets = PlayingWebSockets.GetTableWebSockets(tableIdx);// Your loop logic here
+    var data = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.TableId == tableIdx);
 
+    var jsonObject = new
+    {
+        Type = "BroadCast",
+        Data = data // Use the object array here
+    };
+
+    // Serialize the object to a JSON string
+    string jsonString = JsonSerializer.Serialize(jsonObject);
+    app.Logger.LogInformation("We broadcast data " + jsonString);
+    var messageBuffer = Encoding.UTF8.GetBytes(jsonString);
+    if (websockets != null) {
+        foreach (WebSocket? websocket in websockets) {
+            if (websocket != null) {
+                await websocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+        }
+    }
+}
 // Game Playing.
 // verify Seat and table.
 app.Map("/ws_playing", async (HttpContext context, GameTableDbContext db) => // Added UserDb parameter
@@ -249,13 +271,58 @@ app.Map("/ws_playing", async (HttpContext context, GameTableDbContext db) => // 
     if (context.WebSockets.IsWebSocketRequest)
     {
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-        await WebSocketHandler(app, context, webSocket, db);
+        var currentTable = context.Session.GetInt32("UserTableId");
+        var currentPos = context.Session.GetInt32("UserTablePos");
+        app.Logger.LogInformation($"{currentTable} - {currentPos}");
+        if (currentTable.HasValue && currentPos.HasValue) {
+            PlayingWebSockets.AddSocket(currentTable.Value-1, currentPos.Value-1, webSocket);
+        }
+        await BroadRoomStatus(app, context, currentTable??1, db);
+        await RoomWebSocketHandler(app, context, webSocket, db);
     }
     else
     {
         context.Response.StatusCode = 400; // Bad Request if not a WebSocket request
     }
 });
+
+static async Task RoomWebSocketHandler(WebApplication app, HttpContext context, 
+                                    WebSocket webSocket, GameTableDbContext gameTableDb)
+{
+    var buffer = new byte[1024 * 4];
+    WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+    
+    while (!result.CloseStatus.HasValue)
+    {
+        // Print the received content
+        var receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
+        app.Logger.LogInformation($"Received client message: {receivedMessage}"); // Log the received message
+        // "TAKESEAT"
+
+        var clientMessage = JsonSerializer.Deserialize<ClientMessage>(receivedMessage);
+
+
+        if (clientMessage != null && clientMessage.Action == "IAMREADY") {
+            
+        }
+        //await webSocket.SendAsync(new ArraySegment<byte>(replyMessageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+            
+        result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+    }
+
+    var currentTable = context.Session.GetInt32("UserTableId");
+    var currentPos = context.Session.GetInt32("UserTablePos");
+    if (currentTable.HasValue && currentPos.HasValue) {
+        PlayingWebSockets.RemoveSocket(currentTable.Value, currentPos.Value);
+    }
+    // Client close it's socket here.
+    
+    // var userTable1 = context.Session.GetInt32("UserTableId");
+    // var userPos1 = context.Session.GetInt32("UserTablePos");
+    // app.Logger.LogInformation("User close the websocket in pos " + userTable1 + " " + userPos1);
+    // await BroadCastHallStatus(gameTableDb, app.Logger);
+
+}
 
 // GamePanel broadcast data.
 // Take a Seat
@@ -265,12 +332,11 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
     if (context.WebSockets.IsWebSocketRequest)
     {
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-        //app.Logger.LogInformation("Current table size " + await db.Tables.CountAsync());
-        
+
         ActiveWebSockets.AddSocket(context.Session.GetInt32("UserId")?? 0, webSocket);
         
         await BroadCastHallStatus(db, app.Logger);
-        await WebSocketHandler(app, context, webSocket, db);
+        await BigHallWebSocketHandler(app, context, webSocket, db);
     }
     else
     {
@@ -278,7 +344,8 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
     }
 });
 
-static async Task WebSocketHandler(WebApplication app, HttpContext context, 
+
+static async Task BigHallWebSocketHandler(WebApplication app, HttpContext context, 
                                     WebSocket webSocket, GameTableDbContext gameTableDb)
 {
     var buffer = new byte[1024 * 4];

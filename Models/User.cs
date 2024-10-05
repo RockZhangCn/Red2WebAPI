@@ -22,6 +22,8 @@ namespace Red2WebAPI.Models
         public string Salt { get; set; } = null!;
 
         public int Score { get; set; }
+
+        //public DateTime Createtime { get; set; }
     }
 
     // Define a DTO class
