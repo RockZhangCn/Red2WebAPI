@@ -233,6 +233,8 @@ app.MapPost("/login", async (HttpContext httpContext, UserDbContext db) =>
             };
             
             httpContext.Session.SetInt32("UserId", user.Id);
+            httpContext.Session.SetInt32("UserAvatar", user.Avatar);
+            httpContext.Session.SetString("UserNickname", user.Nickname);
             return Results.Ok(userDtoSuccess);
         }
     } 
@@ -246,7 +248,7 @@ app.MapPost("/login", async (HttpContext httpContext, UserDbContext db) =>
     
 });
 
-static async Task BroadRoomStatus(WebApplication app, HttpContext context, int tableIdx,
+static async Task BroadcastRoomStatus(WebApplication app, HttpContext context, int tableIdx,
                                     GameTableDbContext gameTableDb) {
     var websockets = PlayingWebSockets.GetTableWebSockets(tableIdx);// Your loop logic here
     var data = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.TableId == tableIdx);
@@ -278,11 +280,34 @@ app.Map("/ws_playing", async (HttpContext context, GameTableDbContext db) => // 
         using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
         var currentTable = context.Session.GetInt32("UserTableId");
         var currentPos = context.Session.GetInt32("UserTablePos");
+        var userId = context.Session.GetInt32("UserId");
+        var avatar =  context.Session.GetInt32("UserAvatar");
+        var nickName = context.Session.GetString("UserNickname");
+
+
         app.Logger.LogInformation($"{currentTable} - {currentPos}");
         if (currentTable.HasValue && currentPos.HasValue) {
             PlayingWebSockets.AddSocket(currentTable.Value-1, currentPos.Value-1, webSocket);
         }
-        await BroadRoomStatus(app, context, currentTable??1, db);
+
+        var table = await db.Tables.FirstOrDefaultAsync(table => table.TableId == (currentTable??0));
+        
+        // create new player
+        Player newPlayer = new Player {
+            UserId = userId??0,
+            AvatarId = avatar??5,
+            Nickname = nickName??"Unknown",
+            TableId = currentTable??0,
+            Pos = currentPos??0,  
+            GameTable = table??null,     
+        };
+
+       
+        table?.Players.Add(newPlayer);
+        app.Logger.LogInformation("RooWebsocket We add player " + nickName??"Unknown" + $" to table {currentTable??0}");
+
+
+        await BroadcastRoomStatus(app, context, currentTable??1, db);
         await RoomWebSocketHandler(app, context, webSocket, db);
     }
     else
@@ -302,7 +327,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         // Print the received content
         var receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
         app.Logger.LogInformation($"Received client message: {receivedMessage}"); // Log the received message
-        // "TAKESEAT"
+
 
         var clientMessage = JsonSerializer.Deserialize<ClientMessage>(receivedMessage);
 
@@ -322,6 +347,8 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
     if (currentTable.HasValue && currentPos.HasValue) {
         PlayingWebSockets.RemoveSocket(currentTable.Value, currentPos.Value);
     }
+
+    // Remove Player.
    
 }
 
@@ -375,13 +402,14 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
                     var id = context.Session.GetInt32("UserId");
                     var newPlayer = new Player{
                         UserId = id ?? -1,
-                    
                         AvatarId = clientMessage.Avatar,
                         Nickname =  clientMessage.NickName,
                         TableId =  tableIdx,
                         Pos = pos,
                         GameTable = table,
                     };
+
+                    app.Logger.LogInformation("BigHall We add player " + clientMessage.NickName + " to table " + tableIdx);
 
                     table.Players.Add(newPlayer);
 
@@ -405,6 +433,8 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
                         } else {
                             app.Logger.LogWarning("We failed clear position " + userTable + "" + userPos);
                         }
+
+                        PlayingWebSockets.RemoveSocket(userTable??0, userPos??0);
                     }
                     // clear end.
                     context.Session.SetInt32("UserTableId", tableIdx);

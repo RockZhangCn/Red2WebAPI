@@ -1,4 +1,5 @@
-using System.ComponentModel.DataAnnotations; // {{ edit_1 }}
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization; // {{ edit_1 }}
 
 namespace Red2WebAPI.Models
 {
@@ -22,13 +23,10 @@ namespace Red2WebAPI.Models
         [Required]
         public required int Pos { get; set; }
 
+        [JsonIgnore]
         [Required]
-        public required GameTable GameTable{ get; set; }
+        public GameTable? GameTable{ get; set; }
 
         public List<int> Cards { get; set; } = new List<int>(); // Initialize with an empty list
     }
-
-
- 
-
 }

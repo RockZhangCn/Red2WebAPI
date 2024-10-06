@@ -23,7 +23,7 @@ namespace Red2WebAPI.Models
 
         public int Score { get; set; }
 
-        //public DateTime Createtime { get; set; }
+        public DateTime Createtime { get; set; }
     }
 
     // Define a DTO class

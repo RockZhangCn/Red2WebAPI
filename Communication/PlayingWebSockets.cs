@@ -6,8 +6,6 @@ namespace Red2WebAPI.Communication
 {
     public class PlayingWebSockets {
 
-
-
         static Dictionary<int, WebSocket?[]> PlayingSockets = new Dictionary<int, WebSocket?[]>();
         private static readonly object _lock = new object(); // Lock object
 
