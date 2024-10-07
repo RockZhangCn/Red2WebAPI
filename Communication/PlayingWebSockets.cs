@@ -15,7 +15,7 @@ namespace Red2WebAPI.Communication
             lock (_lock) {
                 if (!PlayingSockets.ContainsKey(tableIdx)) {
                     PlayingSockets[tableIdx] = new WebSocket?[4]; // Define an array of size 4
-                    Count += 10000;
+                    Count += 1;
                     Console.WriteLine($"Created new socket array for table {tableIdx}");
                 }
                 Count++;

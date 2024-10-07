@@ -8,11 +8,11 @@ namespace Red2WebAPI.Communication {
         public required string Action { get; set; }
         public required int TableIdx { get; set; }
         public required int Pos { get; set; }
-
         public required int Avatar { get; set; }
 
         public required string NickName { get; set;}
 
         public List<int> Cards { get; set; } = new List<int>();
     }
+
 }

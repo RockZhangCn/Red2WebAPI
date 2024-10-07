@@ -23,10 +23,20 @@ namespace Red2WebAPI.Models
         [Required]
         public required int Pos { get; set; }
 
+        public required PlayerStatus Status { get; set; }
+
         [JsonIgnore]
         [Required]
         public GameTable? GameTable{ get; set; }
 
-        public List<int> Cards { get; set; } = new List<int>(); // Initialize with an empty list
+        public List<int>? Cards { get; set; } // Initialize with an empty list
+    }
+
+
+    public enum PlayerStatus {
+        SEATED = 1,
+        READY = 2,
+        INPROGRESS,
+        WATCHING,
     }
 }
