@@ -16,6 +16,8 @@ namespace Red2WebAPI.Models
 
     public enum GameStatus {
         WAITING = 1,
+        GRAB2,
+        YIELD2,
         INPROGRESS,
         END,
     }

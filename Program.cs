@@ -155,7 +155,7 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db,
                 var oldPlayer = oldTable?.Players?.Find(p => p.Pos == userPos);
                 
                 if (oldPlayer != null) {
-                    app.Logger.LogInformation("We clear position " + userTable + "" + userPos);
+                    app.Logger.LogInformation("----------- User logout, we clear position " + userTable + "" + userPos);
                     oldTable?.Players?.Remove(oldPlayer);
                 }
             }
@@ -312,42 +312,71 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         var clientMessage = JsonSerializer.Deserialize<ClientMessage>(receivedMessage);
 
         if (clientMessage != null) {
+            var curTable = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == clientMessage.TableIdx);
+            if (curTable == null) {
+                app.Logger.LogError("We received incorrect table");
+                continue;
+            }
+
+            // make sure we have the latest data. ROCKROCKZHANG
+            await gameTableDb.Entry(curTable).Collection(t => t.Players).LoadAsync(); //
+            
+            var curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
+            if (curPlayer == null) {
+                app.Logger.LogError($"We received incorrect pos {clientMessage.Pos} in table");
+                Thread.Sleep(2000);
+                continue;
+                
+            }
+
             if(clientMessage.Action == "IAMIN") {
                 // added to ROOM broacast.
-                var currentTable1 = context.Session.GetInt32("UserTableId");
-                var currentPos1 = context.Session.GetInt32("UserTablePos");
+                var currentTableId = context.Session.GetInt32("UserTableId");
+                var currentPosId = context.Session.GetInt32("UserTablePos");
                 var userId = context.Session.GetInt32("UserId");
                 var avatar =  context.Session.GetInt32("UserAvatar");
                 var nickName = context.Session.GetString("UserNickname");
 
-                if (currentTable1.HasValue && currentPos1.HasValue) {
-                    PlayingWebSockets.AddSocket(currentTable1.Value, currentPos1.Value, webSocket);
+                if (currentTableId.HasValue && currentPosId.HasValue) {
+                    PlayingWebSockets.AddSocket(currentTableId.Value, currentPosId.Value, webSocket);
                 }
-                app.Logger.LogInformation($"ws_playing {nickName} PlayingWebSockets<{PlayingWebSockets.Count}> addED websocket for table {currentTable1} pos {currentPos1} END.");
+                app.Logger.LogInformation($"ws_playing {nickName} PlayingWebSockets<{PlayingWebSockets.Count}> addED websocket for table {currentTableId} pos {currentPosId} END.");
 
                 // The user take seat have added the Player, so we don't need add player here.
             } else if(clientMessage.Action == "IAMQUIT") {
                 app.Logger.LogInformation($"ws_playing some user {clientMessage.TableIdx} {clientMessage.Pos} exit the room");
 
-                var table = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == clientMessage.TableIdx);
-                if (table != null) {
-                    var playerToRemove = table.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
-                    if (playerToRemove != null) {
-                        table.Players.Remove(playerToRemove); // Remove the player from the Players collection
-                        app.Logger.LogInformation($"----------------------Removed player at position {clientMessage.Pos} from table {clientMessage.TableIdx}.");
-                        gameTableDb.SaveChanges();
-                    } else {
-                        app.Logger.LogWarning($"No player found at position {clientMessage.Pos} on table {clientMessage.TableIdx}.");
-                    }
-                } else {
-                    app.Logger.LogError($"Table with ID {clientMessage.TableIdx} not found.");
-                }
+                // Clear data in session.
+                context.Session.Remove("UserTableId");
+                context.Session.Remove("UserTablePos");
+
+                curTable.Players.Remove(curPlayer); // Remove the player from the Players collection
+                app.Logger.LogInformation($"----------------------Removed player at position {clientMessage.Pos} from table {clientMessage.TableIdx}.");
+                gameTableDb.SaveChanges();
+                
                 await BroadCastHallStatus(gameTableDb, app.Logger);
 
                 PlayingWebSockets.RemoveSocket(clientMessage.TableIdx, clientMessage.Pos);
+            } else if(clientMessage.Action == "IAMREADY") {
+                curPlayer.Status = PlayerStatus.READY;
+                curPlayer.Message = "I am ready.";
+
+                var notReadyPlayer = curTable.Players.FirstOrDefault(p => p.Status != PlayerStatus.SEATED);
+
+                // we are all ready.
+                if (notReadyPlayer == null) {
+                    app.Logger.LogInformation("AAAAAA We started the table game.");
+                    foreach (var player in curTable.Players)
+                    {
+                        player.Status = PlayerStatus.INPROGRESS; // Set the desired status here
+                        curTable.GameStatus = GameStatus.GRAB2;
+                    }
+                }
+                
             }
         }
-
+        
+        gameTableDb.SaveChanges();
         //await webSocket.SendAsync(new ArraySegment<byte>(replyMessageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);  
         
         await BroadcastRoomStatus(app, context, gameTableDb);
@@ -362,17 +391,6 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
     app.Logger.LogInformation("RoomWebSocketHandler close websocket table " + $"{currentTable} pos {currentPos}");
     if (currentTable.HasValue && currentPos.HasValue) {
         PlayingWebSockets.RemoveSocket(currentTable.Value, currentPos.Value);
-
-        // When user click backward to DashBoard, we should Remove Player socket, but the player is still
-        // seated in original place..
-        
-        // var table = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == currentTable);
-        // var removePlayer = table?.Players.Find(p => p.Pos == currentPos.Value);
-        // if (table != null && removePlayer != null) {
-        //     app.Logger.LogInformation($"RoomWebSocketHandler remove Player from table {currentTable}");
-        //     table?.Players?.Remove(removePlayer);
-        // }
-        // gameTableDb.SaveChanges();
     }
 }
 
@@ -431,6 +449,7 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
                         Pos = pos,
                         Status = PlayerStatus.SEATED,
                         GameTable = table,
+                        Message = "Just seated."
                     };
 
  
@@ -450,7 +469,7 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
                         var oldPlayer = oldTable?.Players?.FirstOrDefault(p => p.Pos == userPos);
                         
                         if (oldPlayer != null) {
-                            app.Logger.LogInformation("--------- We clear position " + userTable + "" + userPos);
+                            app.Logger.LogInformation("----------- We clear position " + userTable + "" + userPos);
                             oldTable?.Players?.Remove(oldPlayer);
                         } else {
                             app.Logger.LogWarning("We failed clear position " + userTable + "" + userPos);
