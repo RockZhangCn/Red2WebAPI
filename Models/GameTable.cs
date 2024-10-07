@@ -8,10 +8,11 @@ namespace Red2WebAPI.Models
 
         public required int TableId { get; set; }
 
+        public required GameStatus GameStatus { get; set;}
+
         public List<Player> Players{ get; set; } = new List<Player>();
 
-        public required GameStatus GameStatus { get; set;}
-    
+        public List<int> CentreCards { get; set; } = new List<int>();
     }
 
     public enum GameStatus {
