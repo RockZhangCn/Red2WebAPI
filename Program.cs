@@ -6,6 +6,7 @@ using System.Text; // Added for Encoding
 using Red2WebAPI.Seed;
 using Red2WebAPI.Communication;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
+using Cards;
 // var builder = WebApplication.CreateBuilder(args);
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -321,10 +322,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             // make sure we have the latest data. ROCKROCKZHANG
             await gameTableDb.Entry(curTable).Collection(t => t.Players).LoadAsync(); //
             
-            var curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
-            if (curPlayer == null) {
-                app.Logger.LogWarning("We are IAMIN action, so can't find the user.");
-            }
+
 
             if(clientMessage.Action == "IAMIN") {
                 // added to ROOM broacast.
@@ -340,14 +338,24 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 app.Logger.LogInformation($"ws_playing {nickName} PlayingWebSockets<{PlayingWebSockets.Count}> addED websocket for table {currentTableId} pos {currentPosId} END.");
 
                 // The user take seat have added the Player, so we don't need add player here.
-            } else if(clientMessage.Action == "IAMQUIT") {
+            } 
+            
+            var curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
+            if (curPlayer == null) {
+                app.Logger.LogError($"We have an incorrect curPlayer with pos {clientMessage.Pos}");
+                continue;
+            }
+
+            if(clientMessage.Action == "IAMQUIT") {
                 app.Logger.LogInformation($"ws_playing some user {clientMessage.TableIdx} {clientMessage.Pos} exit the room");
 
                 // Clear data in session.
                 context.Session.Remove("UserTableId");
                 context.Session.Remove("UserTablePos");
 
-                curTable.Players.Remove(curPlayer); // Remove the player from the Players collection
+                
+                curTable.Players.Remove(curPlayer);
+                
                 app.Logger.LogInformation($"----------------------Removed player at position {clientMessage.Pos} from table {clientMessage.TableIdx}.");
                 gameTableDb.SaveChanges();
                 
@@ -355,21 +363,75 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
                 PlayingWebSockets.RemoveSocket(clientMessage.TableIdx, clientMessage.Pos);
             } else if(clientMessage.Action == "IAMREADY") {
+  
                 curPlayer.Status = PlayerStatus.READY;
                 curPlayer.Message = "I am ready.";
+  
 
                 var notReadyPlayer = curTable.Players.FirstOrDefault(p => p.Status != PlayerStatus.SEATED);
 
                 // we are all ready.
                 if (notReadyPlayer == null) {
                     app.Logger.LogInformation("AAAAAA We started the table game.");
+
+                    var all_cards = Card.Shuffle();
+                    curTable.Players.ForEach(p => {
+                        int index = p.Pos - 1;
+                        p.Cards = all_cards.Skip(index * 26).Take(26).ToList(); // Corrected assignment to List<int>
+                    });
+
                     foreach (var player in curTable.Players)
                     {
                         player.Status = PlayerStatus.INPROGRESS; // Set the desired status here
-                        curTable.GameStatus = GameStatus.GRAB2;
                     }
+                    curTable.GameStatus = GameStatus.GRAB2;
+
+                    // last user have the active.
+
+                    curPlayer.IsActive = true;
+                }  
+            } 
+            
+            // Current is the active player.
+            var nextActivePos =(curPlayer.Pos + 1)%5;
+            foreach (var player in curTable.Players)
+            {
+                if (player.Pos == nextActivePos) {
+                    player.IsActive = true;
+                } else {
+                    player.IsActive = false;
                 }
-                
+            }
+            
+            if(clientMessage.Action == "GRAB2S") {
+                foreach (var player in curTable.Players)
+                {
+                    while(player.Cards?.Contains(48)??false) {
+                        player.Cards?.Remove(48);
+                    }
+                    player.IsActive = false;
+                }
+
+                curPlayer.Cards?.Add(48);
+                curPlayer.Cards?.Add(48);
+                curPlayer.IsActive = true;
+
+                curTable.GameStatus = GameStatus.INPROGRESS;
+            } else if(clientMessage.Action == "NOGRAB") {
+                curTable.GameStatus = GameStatus.GRAB2;
+            } else if(clientMessage.Action == "YIELD2") {
+                curPlayer.Cards?.Remove(48);
+                curTable.Players.ForEach(p => {
+                    if (p.Pos == (curPlayer?.Pos + 2)%5) {
+                        p.Cards?.Add(48);
+                    }
+                });
+
+                curTable.GameStatus = GameStatus.INPROGRESS;
+            } else if(clientMessage.Action == "SHOT") {
+                curTable.CentreCards = clientMessage.Cards;
+            } else if(clientMessage.Action == "SKIP") {
+
             }
         }
         
