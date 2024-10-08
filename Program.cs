@@ -250,10 +250,10 @@ app.MapPost("/login", async (HttpContext httpContext, UserDbContext db) =>
     return Results.Ok(userDtoFailed);
 });
 
-static async Task BroadcastRoomStatus(WebApplication app, HttpContext context,
+static async Task BroadcastRoomStatus(WebApplication app, int tableIdx,
                                     GameTableDbContext gameTableDb) {
     
-    var tableIdx = context.Session.GetInt32("UserTableId")??0;
+    await gameTableDb.Tables.ToListAsync();
     var currentTable = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.TableId == tableIdx);
     if (currentTable != null) {
         // Ensure the players are fetched from the database after any changes
@@ -302,22 +302,31 @@ app.Map("/ws_playing", async (HttpContext context, GameTableDbContext db) => // 
 });
 
 static async Task RoomWebSocketHandler(WebApplication app, HttpContext context, 
-                                    WebSocket webSocket, GameTableDbContext gameTableDb)
+                                    WebSocket webSocket, GameTableDbContext gameTableDb1)
 {
     var buffer = new byte[1024 * 4];
     WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
     
+    var optionsBuilder = new DbContextOptionsBuilder<GameTableDbContext>(); // Use DbContextOptionsBuilder
+    optionsBuilder.UseInMemoryDatabase("GameTable"); // Configure the in-memory database
+    var gameTableDb = new GameTableDbContext(optionsBuilder.Options); // Pass the configured options
+
+    var tableId = -1;
+    
     while (!result.CloseStatus.HasValue)
     {
+        gameTableDb = new GameTableDbContext(optionsBuilder.Options); 
         // Print the received content
         var receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
         app.Logger.LogInformation($"Received client room message: {receivedMessage}"); // Log the received message
 
-
         var clientMessage = JsonSerializer.Deserialize<ClientMessage>(receivedMessage);
-
+        
+        await gameTableDb.Tables.ToListAsync();
+        
         if (clientMessage != null) {
-            var curTable = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == clientMessage.TableIdx);
+            tableId = clientMessage.TableIdx;
+            var curTable = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == tableId);
             if (curTable == null) {
                 app.Logger.LogError("We received incorrect table");
                 continue;
@@ -326,8 +335,14 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             // make sure we have the latest data. ROCKROCKZHANG
             await gameTableDb.Entry(curTable).Collection(t => t.Players).LoadAsync(); //
             
+            app.Logger.LogInformation(JsonSerializer.Serialize<GameTable>(curTable));
 
-
+            var curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
+            if (curPlayer == null) {
+                app.Logger.LogError($"We have an incorrect curPlayer with pos {clientMessage.Pos}");
+                continue;
+            }
+            
             if(clientMessage.Action == "IAMIN") {
                 // added to ROOM broacast.
                 var currentTableId = context.Session.GetInt32("UserTableId");
@@ -342,15 +357,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 app.Logger.LogInformation($"ws_playing {nickName} PlayingWebSockets<{PlayingWebSockets.Count}> addED websocket for table {currentTableId} pos {currentPosId} END.");
 
                 // The user take seat have added the Player, so we don't need add player here.
-            } 
-            
-            var curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
-            if (curPlayer == null) {
-                app.Logger.LogError($"We have an incorrect curPlayer with pos {clientMessage.Pos}");
-                continue;
-            }
-
-            if(clientMessage.Action == "IAMQUIT") {
+            } else if (clientMessage.Action == "IAMQUIT") { //backforward.
                 app.Logger.LogInformation($"ws_playing some user {clientMessage.TableIdx} {clientMessage.Pos} exit the room");
 
                 // Clear data in session.
@@ -371,7 +378,6 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 curPlayer.Status = PlayerStatus.READY;
                 curPlayer.Message = "I am ready.";
   
-
                 var notReadyPlayer = curTable.Players.FirstOrDefault(p => p.Status != PlayerStatus.SEATED);
 
                 // we are all ready.
@@ -391,7 +397,6 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     curTable.GameStatus = GameStatus.GRAB2;
 
                     // last user have the active.
-
                     curPlayer.IsActive = true;
                 }  
             } 
@@ -440,19 +445,20 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         }
         
         gameTableDb.SaveChanges();
-        //await webSocket.SendAsync(new ArraySegment<byte>(replyMessageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);  
         
-        await BroadcastRoomStatus(app, context, gameTableDb);
+        await BroadcastRoomStatus(app, tableId, gameTableDb);
 
         result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
     }
 
     var currentTable = context.Session.GetInt32("UserTableId");
     var currentPos = context.Session.GetInt32("UserTablePos");
-
+    
     if (currentTable.HasValue && currentPos.HasValue) {
+
+        gameTableDb = new GameTableDbContext(optionsBuilder.Options); 
         // If user directly close the tab, there will be no IAMQUIT message.
-        app.Logger.LogInformation("User Close Tab RoomWebSocketHandler close websocket table " + $"{currentTable} pos {currentPos}");
+        app.Logger.LogWarning("User Close Tab RoomWebSocketHandler close websocket table " + $"{currentTable} pos {currentPos}");
         PlayingWebSockets.RemoveSocket(currentTable.Value, currentPos.Value);
 
         var curTable = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == currentTable.Value);
@@ -493,8 +499,9 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
 
         ActiveWebSockets.AddSocket(context.Session.GetInt32("UserId")?? 0, webSocket);
         
+        //for first user to show Bighall.
         await BroadCastHallStatus(db, app.Logger);
-        await BigHallWebSocketHandler(app, context, webSocket, db);
+        await BigHallWebSocketHandler(app, context, webSocket);
     }
     else
     {
@@ -504,13 +511,18 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
 
 
 static async Task BigHallWebSocketHandler(WebApplication app, HttpContext context, 
-                                    WebSocket webSocket, GameTableDbContext gameTableDb)
+                                    WebSocket webSocket)
 {
     var buffer = new byte[1024 * 4];
     WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
     
+    var optionsBuilder = new DbContextOptionsBuilder<GameTableDbContext>(); // Use DbContextOptionsBuilder
+    optionsBuilder.UseInMemoryDatabase("GameTable"); // Configure the in-memory database
+    var gameTableDb = new GameTableDbContext(optionsBuilder.Options); // Pass the configured options
+
     while (!result.CloseStatus.HasValue)
     {
+        gameTableDb = new GameTableDbContext(optionsBuilder.Options); // Pass the configured options
         // Print the received content
         var receivedMessage = Encoding.UTF8.GetString(buffer, 0, result.Count);
         app.Logger.LogInformation($"Received client bighall message: {receivedMessage}"); // Log the received message
@@ -579,7 +591,6 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
 
                     // room broadcast notify other user we come in.
                     // add a action(We are in) to remove this broadcast.
-                    // await BroadcastRoomStatus(app, context, gameTableDb);
 
                 } else {
                     replyResult = false;
@@ -625,6 +636,7 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
     var userTable1 = context.Session.GetInt32("UserTableId");
     var userPos1 = context.Session.GetInt32("UserTablePos");
     app.Logger.LogInformation("User close the bighall websocket into table " + userTable1 + " pos " + userPos1);
+    gameTableDb = new GameTableDbContext(optionsBuilder.Options); // Pass the configured options
     await BroadCastHallStatus(gameTableDb, app.Logger);
 }
 
@@ -657,7 +669,7 @@ static async Task BroadCastHallStatus(GameTableDbContext gameTableDb, ILogger lo
     string jsonString = JsonSerializer.Serialize(jsonObject);
 
     var messageBuffer = Encoding.UTF8.GetBytes(jsonString);
-    logger.LogInformation("We begin to broadcast data to all users " + websockets.Count + " " + jsonString);
+    logger.LogInformation("BigHall begin to broadcast data to all <" + websockets.Count + "> users :" + jsonString);
     foreach (WebSocket websocket in websockets) {
         await websocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
     }

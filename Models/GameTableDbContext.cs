@@ -25,5 +25,6 @@ namespace Red2WebAPI.Models
                 .WithMany(t => t.Players) 
                 .HasForeignKey(p => p.TableId);
         }
+        
     }
 }
