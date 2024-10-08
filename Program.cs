@@ -9,18 +9,22 @@ using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Cards;
 // var builder = WebApplication.CreateBuilder(args);
 
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
     ApplicationName = typeof(Program).Assembly.FullName,
     ContentRootPath = Directory.GetCurrentDirectory(),
     EnvironmentName = Environments.Staging,
+    
 });
 
 Console.WriteLine($"Application Name: {builder.Environment.ApplicationName}");
 Console.WriteLine($"Environment Name: {builder.Environment.EnvironmentName}");
 Console.WriteLine($"ContentRoot Path: {builder.Environment.ContentRootPath}");
 Console.WriteLine($"WebRootPath: {builder.Environment.WebRootPath}");
+
+builder.WebHost.UseUrls("http://0.0.0.0:8003");
 
 builder.Services.AddSqlite<UserDbContext>("Data Source=User.db");
 builder.Services.AddDbContext<GameTableDbContext>(opt => opt.UseInMemoryDatabase("GameTable"));
@@ -30,7 +34,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowOrigin",
-        builder => builder.WithOrigins("http://localhost:3000")
+        builder => builder.WithOrigins("http://localhost:3000", "http://192.168.1.234:3000")
                           .AllowAnyMethod()
                           .AllowAnyHeader()
                           .AllowCredentials());
