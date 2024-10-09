@@ -44,5 +44,19 @@ namespace Red2WebAPI.Communication
             }
         }
 
+        public static int GetWebsocketPostion(int tableId, WebSocket websocket) {
+            lock (_lock) {
+                if (PlayingSockets.TryGetValue(tableId, out var socketList)) {
+                    for (int i = 0; i < socketList.Length; i++) {
+                        if (socketList[i] != websocket) {
+                            return i+1;
+                        }
+                    }
+                }
+            }
+
+            return -1;
+        }
+
     }
 }

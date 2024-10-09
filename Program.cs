@@ -278,7 +278,13 @@ static async Task BroadcastRoomStatus(WebApplication app, int tableIdx,
         foreach (WebSocket? websocket in websockets) {
             if (websocket != null) {
                 app.Logger.LogInformation("ROOM BroadCast send data.");
-                await websocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+                
+                try {
+                    await websocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+                } catch(WebSocketException) {
+                    int pos = PlayingWebSockets.GetWebsocketPostion(tableIdx, websocket);
+                    app.Logger.LogError("SendAsyn Exception " + websocket.GetType().Name + " pos is " + pos);  
+                }
             }
         }
     } else {
@@ -322,7 +328,13 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
         var clientMessage = JsonSerializer.Deserialize<ClientMessage>(receivedMessage);
         
-        await gameTableDb.Tables.ToListAsync();
+        bool isPing = false;
+        if(clientMessage?.Action == "PING") {
+            clientMessage = null;
+            isPing = true;
+        } else {
+            await gameTableDb.Tables.ToListAsync();
+        }
         
         if (clientMessage != null) {
             tableId = clientMessage.TableIdx;
@@ -335,12 +347,12 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             // make sure we have the latest data. ROCKROCKZHANG
             await gameTableDb.Entry(curTable).Collection(t => t.Players).LoadAsync(); //
             
-            app.Logger.LogInformation(JsonSerializer.Serialize<GameTable>(curTable));
+            app.Logger.LogInformation("RoomWebSocketHandler curTable:" + JsonSerializer.Serialize<GameTable>(curTable));
 
             var curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
             if (curPlayer == null) {
                 app.Logger.LogError($"We have an incorrect curPlayer with pos {clientMessage.Pos}");
-                continue;
+
             }
             
             if(clientMessage.Action == "IAMIN") {
@@ -364,8 +376,9 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 context.Session.Remove("UserTableId");
                 context.Session.Remove("UserTablePos");
 
-                
-                curTable.Players.Remove(curPlayer);
+                if (curPlayer != null) {
+                    curTable.Players.Remove(curPlayer);
+                }
                 
                 app.Logger.LogInformation($"----------------------Removed player at position {clientMessage.Pos} from table {clientMessage.TableIdx}.");
                 gameTableDb.SaveChanges();
@@ -374,14 +387,16 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
                 PlayingWebSockets.RemoveSocket(clientMessage.TableIdx, clientMessage.Pos);
             } else if(clientMessage.Action == "IAMREADY") {
+                
+                if (curPlayer != null) {
+                    curPlayer.Status = PlayerStatus.READY;
+                    curPlayer.Message = "I am ready.";
+                }
   
-                curPlayer.Status = PlayerStatus.READY;
-                curPlayer.Message = "I am ready.";
-  
-                var notReadyPlayer = curTable.Players.FirstOrDefault(p => p.Status != PlayerStatus.SEATED);
+                var notReadyPlayer = curTable.Players.FirstOrDefault(p => p.Status != PlayerStatus.READY);
 
                 // we are all ready.
-                if (notReadyPlayer == null) {
+                if (notReadyPlayer == null && curTable.Players.Count == 4) {
                     app.Logger.LogInformation("AAAAAA We started the table game.");
 
                     var all_cards = Card.Shuffle();
@@ -397,21 +412,13 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     curTable.GameStatus = GameStatus.GRAB2;
 
                     // last user have the active.
-                    curPlayer.IsActive = true;
-                }  
-            } 
-            
-            // Current is the active player.
-            var nextActivePos =(curPlayer.Pos + 1)%5;
-            foreach (var player in curTable.Players)
-            {
-                if (player.Pos == nextActivePos) {
-                    player.IsActive = true;
-                } else {
-                    player.IsActive = false;
+                    if (curPlayer != null) {
+                        curPlayer.IsActive = true;
+                    }
                 }
-            }
-            
+
+            } 
+
             if(clientMessage.Action == "GRAB2S") {
                 foreach (var player in curTable.Players)
                 {
@@ -421,15 +428,48 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     player.IsActive = false;
                 }
 
-                curPlayer.Cards?.Add(48);
-                curPlayer.Cards?.Add(48);
-                curPlayer.IsActive = true;
+                if (curPlayer != null) {
+                    curPlayer.Cards?.Add(48);
+                    curPlayer.Cards?.Add(48);
+                    curPlayer.IsActive = true;
+                }
 
                 curTable.GameStatus = GameStatus.INPROGRESS;
-            } else if(clientMessage.Action == "NOGRAB") {
+            } 
+
+            var nextActivePos = (curPlayer?.Pos + 1) % 5;
+            // It will cause error in precede ACTION, there are no Cards Dispatched.
+            // Loop until we find a player with cards
+            // while (true) {
+            //     var nextPlayer = curTable.Players.FirstOrDefault(p => p.Pos == nextActivePos);
+                
+            //     // Check if the next player exists and has cards
+            //     if (nextPlayer != null && nextPlayer.Cards?.Count > 0) {
+            //         // Set this player as active
+            //         nextPlayer.IsActive = true;
+            //         break; // Exit the loop once we find the active player
+            //     }
+
+            //     // Move to the next position
+            //     nextActivePos = (nextActivePos + 1) % 5;
+            // }
+
+            app.Logger.LogInformation($"We get next active pos is {nextActivePos}");
+
+            foreach (var player in curTable.Players)
+            {
+                if (player.Pos == nextActivePos) {
+                    player.IsActive = true;
+                } else {
+                    player.IsActive = false;
+                }
+            }
+
+            
+            if(clientMessage.Action == "NOGRAB") {
                 curTable.GameStatus = GameStatus.GRAB2;
             } else if(clientMessage.Action == "YIELD2") {
-                curPlayer.Cards?.Remove(48);
+                curPlayer?.Cards?.Remove(48);
                 curTable.Players.ForEach(p => {
                     if (p.Pos == (curPlayer?.Pos + 2)%5) {
                         p.Cards?.Add(48);
@@ -439,15 +479,32 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 curTable.GameStatus = GameStatus.INPROGRESS;
             } else if(clientMessage.Action == "SHOT") {
                 curTable.CentreCards = clientMessage.Cards;
+                foreach (var card in clientMessage.Cards) {
+                    curPlayer?.Cards?.Remove(card); // Remove the card if it exists
+                }
+
             } else if(clientMessage.Action == "SKIP") {
 
             }
         }
-        
-        gameTableDb.SaveChanges();
-        
-        await BroadcastRoomStatus(app, tableId, gameTableDb);
 
+        if (!isPing) {
+            gameTableDb.SaveChanges();
+            
+            await BroadcastRoomStatus(app, tableId, gameTableDb);
+        } else {
+
+            var jsonObject = new
+            {
+                Type = "PONG",
+            };
+
+            // Serialize the object to a JSON string
+            string jsonString = JsonSerializer.Serialize(jsonObject);
+
+            var messageBuffer = Encoding.UTF8.GetBytes(jsonString);
+            await webSocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+        }
         result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
     }
 
@@ -501,6 +558,7 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
         
         //for first user to show Bighall.
         await BroadCastHallStatus(db, app.Logger);
+        app.Logger.LogInformation("We connect through ws_hall");
         await BigHallWebSocketHandler(app, context, webSocket);
     }
     else
@@ -626,8 +684,13 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
         var replyMessageBuffer = Encoding.UTF8.GetBytes(replyJsonString);
         app.Logger.LogInformation("We reply to client message " + replyJsonString);
 
-        await webSocket.SendAsync(new ArraySegment<byte>(replyMessageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
-            
+        
+        try {
+            await webSocket.SendAsync(new ArraySegment<byte>(replyMessageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+        } catch(WebSocketException e) {
+            app.Logger.LogError("SendAsyn Exception " + webSocket.GetType().Name, e);
+        }
+        
         result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
     }
 
@@ -671,7 +734,11 @@ static async Task BroadCastHallStatus(GameTableDbContext gameTableDb, ILogger lo
     var messageBuffer = Encoding.UTF8.GetBytes(jsonString);
     logger.LogInformation("BigHall begin to broadcast data to all <" + websockets.Count + "> users :" + jsonString);
     foreach (WebSocket websocket in websockets) {
-        await websocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+        try {
+            await websocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+        } catch(WebSocketException e) {
+            logger.LogError("SendAsyn Exception " + websocket.GetType().Name, e);
+        }
     }
 }
 
