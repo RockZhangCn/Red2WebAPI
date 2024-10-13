@@ -24,7 +24,7 @@ Console.WriteLine($"Environment Name: {builder.Environment.EnvironmentName}");
 Console.WriteLine($"ContentRoot Path: {builder.Environment.ContentRootPath}");
 Console.WriteLine($"WebRootPath: {builder.Environment.WebRootPath}");
 
-builder.WebHost.UseUrls("http://0.0.0.0:8003");
+builder.WebHost.UseUrls("http://localhost:8003");
 
 builder.Services.AddSqlite<UserDbContext>("Data Source=User.db");
 builder.Services.AddDbContext<GameTableDbContext>(opt => opt.UseInMemoryDatabase("GameTable"));
@@ -73,6 +73,26 @@ var app = builder.Build();
 
 // Ensure CORS middleware is applied before other middleware
 app.UseCors("AllowOrigin");
+
+// Add this line to handle 400 Bad Request and 404 Not Found
+app.UseStatusCodePages(context =>
+{
+    var response = context.HttpContext.Response;
+    response.ContentType = "text/plain";
+    var path = context.HttpContext.Request.Path;
+
+
+    if (response.StatusCode == 400)
+    {
+        return response.WriteAsync($"400 Bad Request {path}- The request could not be understood by the server.");
+    }
+    else if (response.StatusCode == 404)
+    {
+        return response.WriteAsync($"404 Not Found {path}- The resource you are looking for does not exist.");
+    }
+
+    return Task.CompletedTask; // For other status codes, do nothing
+});
 
 // app.UseFileServer();
 // app.UseHsts();
