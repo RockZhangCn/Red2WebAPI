@@ -25,8 +25,6 @@ namespace Red2WebAPI.Models
 
         public required string Message { get; set;}
 
-        public bool IsActive { get; set; }
-
         public required PlayerStatus Status { get; set; }
 
         [JsonIgnore]

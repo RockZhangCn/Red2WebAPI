@@ -10,6 +10,8 @@ namespace Red2WebAPI.Models
 
         public required GameStatus GameStatus { get; set;}
 
+        public int? ActivePos { get; set;}
+
         public List<Player> Players{ get; set; } = new List<Player>();
 
         public List<int> CentreCards { get; set; } = new List<int>();
@@ -20,6 +22,5 @@ namespace Red2WebAPI.Models
         GRAB2,
         YIELD2,
         INPROGRESS,
-        END,
     }
 }

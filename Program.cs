@@ -24,7 +24,7 @@ Console.WriteLine($"Environment Name: {builder.Environment.EnvironmentName}");
 Console.WriteLine($"ContentRoot Path: {builder.Environment.ContentRootPath}");
 Console.WriteLine($"WebRootPath: {builder.Environment.WebRootPath}");
 
-builder.WebHost.UseUrls("http://localhost:8003");
+builder.WebHost.UseUrls("http://0.0.0.0:8003");
 
 builder.Services.AddSqlite<UserDbContext>("Data Source=User.db");
 builder.Services.AddDbContext<GameTableDbContext>(opt => opt.UseInMemoryDatabase("GameTable"));
@@ -374,7 +374,28 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 app.Logger.LogError($"We have an incorrect curPlayer with pos {clientMessage.Pos}");
 
             }
-            
+
+            int? prevActive = curTable.ActivePos;
+            if (curTable.ActivePos != null) {
+                while(true) {
+                    curTable.ActivePos = (curTable.ActivePos ) % 4 + 1;
+                    bool getEndUser = false;
+                    curTable.Players.ForEach(p => {
+                        if (p.Pos ==  curTable.ActivePos && p.Cards?.Count == 0) {
+                            getEndUser = true;
+                        }
+                    });
+
+                    if (!getEndUser) {
+                        break;
+                    }
+                }
+
+                if (curTable.ActivePos == prevActive) {
+                    app.Logger.LogInformation("Game end, we get the last user.");
+                }
+            }
+
             if(clientMessage.Action == "IAMIN") {
                 // added to ROOM broacast.
                 var currentTableId = context.Session.GetInt32("UserTableId");
@@ -396,8 +417,16 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 context.Session.Remove("UserTableId");
                 context.Session.Remove("UserTablePos");
 
+         
                 if (curPlayer != null) {
-                    curTable.Players.Remove(curPlayer);
+                    if (curTable.GameStatus != GameStatus.INPROGRESS) {
+                        curTable.Players.Remove(curPlayer);
+                    } else {
+                        curPlayer.AvatarId = 0;
+                        if (curPlayer.Cards?.Count > 0) {
+                            curTable.GameStatus = GameStatus.WAITING;
+                        }
+                    }
                 }
                 
                 app.Logger.LogInformation($"----------------------Removed player at position {clientMessage.Pos} from table {clientMessage.TableIdx}.");
@@ -431,62 +460,27 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     }
                     curTable.GameStatus = GameStatus.GRAB2;
 
-                    // last user have the active.
-                    if (curPlayer != null) {
-                        curPlayer.IsActive = true;
-                    }
+                    Random random = new Random(); // Create a new instance of Random
+                    curTable.ActivePos = random.Next(1, 5); // Generate a random number between 1 and 4 (inclusive)
                 }
 
-            } 
-
-            if(clientMessage.Action == "GRAB2S") {
+            } else if(clientMessage.Action == "GRAB2S") {
                 foreach (var player in curTable.Players)
                 {
                     while(player.Cards?.Contains(48)??false) {
                         player.Cards?.Remove(48);
-                    }
-                    player.IsActive = false;
+                    }    
                 }
 
                 if (curPlayer != null) {
                     curPlayer.Cards?.Add(48);
                     curPlayer.Cards?.Add(48);
-                    curPlayer.IsActive = true;
+
+                    curTable.ActivePos = curPlayer.Pos;
                 }
 
                 curTable.GameStatus = GameStatus.INPROGRESS;
-            } 
-
-            var nextActivePos = (curPlayer?.Pos + 1) % 5;
-            // It will cause error in precede ACTION, there are no Cards Dispatched.
-            // Loop until we find a player with cards
-            // while (true) {
-            //     var nextPlayer = curTable.Players.FirstOrDefault(p => p.Pos == nextActivePos);
-                
-            //     // Check if the next player exists and has cards
-            //     if (nextPlayer != null && nextPlayer.Cards?.Count > 0) {
-            //         // Set this player as active
-            //         nextPlayer.IsActive = true;
-            //         break; // Exit the loop once we find the active player
-            //     }
-
-            //     // Move to the next position
-            //     nextActivePos = (nextActivePos + 1) % 5;
-            // }
-
-            app.Logger.LogInformation($"We get next active pos is {nextActivePos}");
-
-            foreach (var player in curTable.Players)
-            {
-                if (player.Pos == nextActivePos) {
-                    player.IsActive = true;
-                } else {
-                    player.IsActive = false;
-                }
-            }
-
-            
-            if(clientMessage.Action == "NOGRAB") {
+            } else if(clientMessage.Action == "NOGRAB") {
                 curTable.GameStatus = GameStatus.GRAB2;
             } else if(clientMessage.Action == "YIELD2") {
                 curPlayer?.Cards?.Remove(48);
@@ -504,7 +498,14 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 }
 
             } else if(clientMessage.Action == "SKIP") {
+                app.Logger.LogInformation("User clicked SKIP");
+            } 
 
+            // WAITING clear all the cards.
+            if (curTable.GameStatus == GameStatus.WAITING) {
+                curTable.Players.ForEach(p => {
+                        p.Cards = [];
+                });
             }
         }
 
