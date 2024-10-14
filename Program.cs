@@ -354,10 +354,13 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         } else {
             await gameTableDb.Tables.ToListAsync();
         }
+
+        GameTable? curTable = null;
+        Player? curPlayer = null;
         
         if (clientMessage != null) {
             tableId = clientMessage.TableIdx;
-            var curTable = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == tableId);
+            curTable = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == tableId);
             if (curTable == null) {
                 app.Logger.LogError("We received incorrect table");
                 continue;
@@ -368,7 +371,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             
             app.Logger.LogInformation("RoomWebSocketHandler curTable:" + JsonSerializer.Serialize<GameTable>(curTable));
 
-            var curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
+            curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
             if (curPlayer == null) {
                 app.Logger.LogError($"We have an incorrect curPlayer with pos {clientMessage.Pos}");
 
@@ -566,7 +569,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         try {
             result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
         } catch(WebSocketException) {
-            app.Logger.LogWarning($"User pos {userPos} disconnected");
+            app.Logger.LogWarning($"User {curPlayer?.Nickname} pos {userPos} disconnected");
             break;
         }
     }
@@ -597,7 +600,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         }
 
         curTable.Players.Remove(curPlayer); // Remove the player from the Players collection
-        app.Logger.LogInformation($"----------------------Removed player at position {currentPos.Value} from table {currentTable.Value}.");
+        app.Logger.LogInformation($"----------------------Removed player {curPlayer.Nickname} at position {currentPos.Value} from table {currentTable.Value}.");
         gameTableDb.SaveChanges();
 
         // Clear data in session.
