@@ -374,7 +374,24 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == clientMessage.Pos); // Find the player by position
             if (curPlayer == null) {
                 app.Logger.LogError($"We have an incorrect curPlayer with pos {clientMessage.Pos}");
+                // The user didn't take seat, so redirect to bighall.
+                
+                var jsonObject = new
+                {
+                    Type = "RETURN",
+                };
 
+                // Serialize the object to a JSON string
+                string jsonString = JsonSerializer.Serialize(jsonObject);
+
+                var messageBuffer = Encoding.UTF8.GetBytes(jsonString);
+                
+                try {
+                    await webSocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
+                    return;
+                } catch(WebSocketException) {
+                    app.Logger.LogWarning("RoomWebSocketHandler SendAsync Exception " + webSocket.GetType().Name + " pos is " + clientMessage?.Pos);  
+                }
             }
 
             userPos = clientMessage.Pos;
@@ -581,7 +598,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
         gameTableDb = new GameTableDbContext(optionsBuilder.Options); 
         // If user directly close the tab, there will be no IAMQUIT message.
-        app.Logger.LogWarning("User Close Tab RoomWebSocketHandler close websocket table " + $"{currentTable} pos {currentPos}");
+        app.Logger.LogWarning("User Close/Refresh Tab RoomWebSocketHandler close websocket table " + $"{currentTable} pos {currentPos}");
         PlayingWebSockets.RemoveSocket(currentTable.Value, currentPos.Value);
 
         var curTable = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == currentTable.Value);
