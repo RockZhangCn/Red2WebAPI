@@ -297,8 +297,6 @@ static async Task BroadcastRoomStatus(WebApplication app, int tableIdx,
     if (websockets != null) {
         foreach (WebSocket? websocket in websockets) {
             if (websocket != null) {
-                //app.Logger.LogInformation("ROOM BroadCast send data.");
-                
                 try {
                     await websocket.SendAsync(new ArraySegment<byte>(messageBuffer), WebSocketMessageType.Text, true, CancellationToken.None);
                 } catch(WebSocketException) {
@@ -543,7 +541,8 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         try {
             result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
         } catch(WebSocketException) {
-            app.Logger.LogWarning($"User pos ${userPos} disconnected");
+            app.Logger.LogWarning($"User pos {userPos} disconnected");
+            break;
         }
     }
 
