@@ -3,8 +3,7 @@ namespace Cards {
 public class Card
 {
     private static List<int> all_cards = Enumerable.Range(0, 52).Concat(Enumerable.Range(0, 52)).ToList();
-    private static int cards_count = all_cards.Count;
-
+    
     public static int AdjustValue(int card)
     {
         int value = card / 4;
@@ -16,7 +15,7 @@ public class Card
         return all_cards.OrderBy(card => rng.Next()).ToList();
     }
 
-    public static int CardCompare(int card1, int card2)
+    public static int SingleCardCompare(int card1, int card2)
     {
         int value1 = AdjustValue(card1);
         int value2 = AdjustValue(card2);

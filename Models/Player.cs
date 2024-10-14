@@ -38,7 +38,8 @@ namespace Red2WebAPI.Models
     public enum PlayerStatus {
         SEATED = 1,
         READY = 2,
-        INPROGRESS,
-        WATCHING,
+        NOGRAB = 3,
+        INPROGRESS = 4,
+        WATCHING = 5, // cards count is zero.
     }
 }

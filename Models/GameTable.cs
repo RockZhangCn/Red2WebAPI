@@ -22,5 +22,6 @@ namespace Red2WebAPI.Models
         GRAB2,
         YIELD2,
         INPROGRESS,
+        END,
     }
 }

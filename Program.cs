@@ -376,10 +376,12 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
             userPos = clientMessage.Pos;
 
+            bool noNeedMoveOn = clientMessage.Action == "YIELD2" || clientMessage.Action == "NOYIELD";
+
             int? prevActive = curTable.ActivePos;
-            if (curTable.ActivePos != null) {
+            if (curTable.ActivePos != null && !noNeedMoveOn) {
                 while(true) {
-                    curTable.ActivePos = (curTable.ActivePos ) % 4 + 1;
+                    curTable.ActivePos = curTable.ActivePos % 4 + 1;
                     bool getEndUser = false;
                     curTable.Players.ForEach(p => {
                         if (p.Pos ==  curTable.ActivePos && p.Cards?.Count == 0) {
@@ -396,6 +398,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     app.Logger.LogInformation("Game end, we get the last user.");
                 }
             }
+
 
             if(clientMessage.Action == "IAMIN") {
                 // added to ROOM broacast.
@@ -483,26 +486,48 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
                 curTable.GameStatus = GameStatus.INPROGRESS;
             } else if(clientMessage.Action == "NOGRAB") {
-                curTable.GameStatus = GameStatus.GRAB2;
+                if (curPlayer != null) {
+                    curPlayer.Status = PlayerStatus.NOGRAB;
+                }
+
+                var nograbUsers = curTable.Players.FindAll(x => x.Status == PlayerStatus.NOGRAB);
+                if (nograbUsers.Count == 4) {
+                    app.Logger.LogInformation("We are facing Yield 2, four users no grab already.");
+                    bool shouldYield = false;
+                    foreach (var player in curTable.Players)
+                    {
+                        var cards = player.Cards?.FindAll(x => x == 48);
+                        if (cards?.Count == 2) {
+                            shouldYield = true;
+                        }
+                    }
+
+                    if (shouldYield) {
+                        curTable.GameStatus = GameStatus.YIELD2;
+                    } else {
+                        curTable.GameStatus = GameStatus.INPROGRESS;
+                    }
+                }
+
             } else if(clientMessage.Action == "YIELD2") {
                 curPlayer?.Cards?.Remove(48);
                 curTable.Players.ForEach(p => {
-                    if (p.Pos == (curPlayer?.Pos + 2)%5) {
+                    if (p.Pos == curPlayer?.Pos % 4 + 1) {
                         p.Cards?.Add(48);
                     }
                 });
 
                 curTable.GameStatus = GameStatus.INPROGRESS;
+            } else if(clientMessage.Action == "NOYIELD") {
+                curTable.GameStatus = GameStatus.INPROGRESS;
             } else if(clientMessage.Action == "SHOT") {
                 curTable.CentreCards = clientMessage.Cards;
                 foreach (var card in clientMessage.Cards) {
-                    curPlayer?.Cards?.Remove(card); // Remove the card if it exists
+                    curPlayer?.Cards?.Remove(card);
                 }
-
             } else if(clientMessage.Action == "SKIP") {
                 // just switch to next.
                 app.Logger.LogInformation("User clicked SKIP");
-
             } 
 
             // WAITING clear all the cards.
