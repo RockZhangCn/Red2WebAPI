@@ -569,7 +569,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         try {
             result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
         } catch(WebSocketException) {
-            app.Logger.LogWarning($"User {curPlayer?.Nickname} pos {userPos} disconnected");
+            app.Logger.LogWarning($"ReceiveException User {curPlayer?.Nickname} pos {userPos} disconnected");
             break;
         }
     }
@@ -607,7 +607,12 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         context.Session.Remove("UserTableId");
         context.Session.Remove("UserTablePos");
 
-        await BroadCastHallStatus(gameTableDb, app.Logger);
+        var optionsBuilder1 = new DbContextOptionsBuilder<GameTableDbContext>(); // Use DbContextOptionsBuilder
+        optionsBuilder1.UseInMemoryDatabase("GameTable"); // Configure the in-memory database
+        var gameTableDb2 = new GameTableDbContext(optionsBuilder.Options); // Pass the configured options
+        await BroadcastRoomStatus(app, currentTable.Value, gameTableDb2);    
+
+        await BroadCastHallStatus(gameTableDb2, app.Logger);
     }
 }
 
@@ -638,11 +643,18 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
                                     WebSocket webSocket)
 {
     var buffer = new byte[1024 * 4];
-    WebSocketReceiveResult result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+    var closeStatus = WebSocketCloseStatus.NormalClosure; // or any other appropriate status
+    var result = new WebSocketReceiveResult(0, WebSocketMessageType.Close, true, closeStatus, null); // Added null for closeStatusDescription
+
+    try {
+        result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+    } catch(WebSocketException){
+        app.Logger.LogWarning("Exception user disconnect in BigHall");
+    }
     
     var optionsBuilder = new DbContextOptionsBuilder<GameTableDbContext>(); // Use DbContextOptionsBuilder
     optionsBuilder.UseInMemoryDatabase("GameTable"); // Configure the in-memory database
-    var gameTableDb = new GameTableDbContext(optionsBuilder.Options); // Pass the configured options
+    GameTableDbContext? gameTableDb = null;
 
     while (!result.CloseStatus.HasValue)
     {
