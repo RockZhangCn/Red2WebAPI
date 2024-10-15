@@ -8,7 +8,7 @@ namespace Red2WebAPI.Models
 
         public required int TableId { get; set; }
 
-        public required GameStatus GameStatus { get; set;}
+        public required GameStatus GameStatus { get; set;} = GameStatus.WAITING;
 
         public int? ActivePos { get; set;}
 

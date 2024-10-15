@@ -5,7 +5,6 @@ using System.Net.WebSockets; // Add this using directive
 using System.Text; // Added for Encoding
 using Red2WebAPI.Seed;
 using Red2WebAPI.Communication;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Cards;
 // var builder = WebApplication.CreateBuilder(args);
 
@@ -214,6 +213,8 @@ app.MapPost("/register", async (User user, UserDbContext db, ILogger<Program> lo
     user.Salt = UserDbContext.GenerateRandomString();
     user.Digest = UserDbContext.CalcDigest(user.Password, user.Salt);
     user.Score = 0;
+    user.Password = "";
+    user.Createtime = DateTime.Now;
 
     db.Users.Add(user);
     logger.LogInformation("New register user: {@User}", user);
@@ -418,7 +419,6 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 }
             }
 
-
             if(clientMessage.Action == "IAMIN") {
                 // added to ROOM broacast.
                 var currentTableId = context.Session.GetInt32("UserTableId");
@@ -442,12 +442,8 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
                 if (curPlayer != null) {
                     if (curTable.GameStatus != GameStatus.WAITING) {
-                        curTable.Players.Remove(curPlayer);
-                    } else {
-                        //curPlayer.AvatarId = 0;
-                        if (curPlayer.Cards?.Count > 0) {
-                            curTable.GameStatus = GameStatus.WAITING;
-                        }
+                        app.Logger.LogWarning("We quit will exit total game. " + curPlayer.Cards?.Count);
+                        curTable.GameStatus = GameStatus.END;
                     }
 
                     curTable.Players.Remove(curPlayer);
@@ -460,14 +456,17 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
                 PlayingWebSockets.RemoveSocket(clientMessage.TableIdx, clientMessage.Pos);
             } else if(clientMessage.Action == "IAMREADY") {
-                
                 if (curPlayer != null) {
                     curPlayer.Status = PlayerStatus.READY;
                     curPlayer.Message = "I am ready.";
+                    curPlayer.Score = 0;
+                }
+
+                if (curTable.GameStatus == GameStatus.END) {
+                    curTable.GameStatus = GameStatus.WAITING;
                 }
   
                 var notReadyPlayer = curTable.Players.FirstOrDefault(p => p.Status != PlayerStatus.READY);
-
                 // we are all ready.
                 if (notReadyPlayer == null && curTable.Players.Count == 4) {
                     app.Logger.LogInformation("AAAAAA We started the table game.");
@@ -481,10 +480,6 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                         }
                     });
 
-                    foreach (var player in curTable.Players)
-                    {
-                        player.Status = PlayerStatus.INPROGRESS; // Set the desired status here
-                    }
                     curTable.GameStatus = GameStatus.GRAB2;
 
                     Random random = new Random(); // Create a new instance of Random
@@ -507,7 +502,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     curPlayer.Cards?.Add(48);
                     app.Logger.LogInformation($"{curPlayer.Nickname} added red 2s");
                     curTable.ActivePos = curPlayer.Pos;
-                    curTable.Red2TeamPos = [curPlayer.Pos];
+                    curTable.Red2TeamPos.Add(curPlayer.Pos);
                 }
                 
                 curTable.GameStatus = GameStatus.INPROGRESS;
@@ -526,6 +521,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                         if (cards?.Count == 2) {
                             shouldYield = true;
                         }
+                        player.Status = PlayerStatus.INPROGRESS;
                     }
 
                     if (shouldYield) {
@@ -539,7 +535,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             } else if(clientMessage.Action == "YIELD2") {
                 curPlayer?.Cards?.Remove(48);
                 curTable.Players.ForEach(p => {
-                    if (p.Pos == curPlayer?.Pos % 4 + 1) {
+                    if (p.Pos == (curPlayer?.Pos + 1) % 4 + 1) {
                         p.Cards?.Add(48);
                         curTable.Red2TeamPos.Add(p.Pos);
                     }
@@ -563,14 +559,32 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 // calculate the Score.
                 if (curPlayer?.Cards?.Count == 0) {
                     curPlayer.Score = curTable.NextScore;
-                    app.Logger.LogInformation("We shot finished earned score" + curPlayer.Score);
+                    app.Logger.LogInformation("We shot finished earned score " + curPlayer.Score);
                     curTable.NextScore--;
                     // We have no cards, move the right to next active user.
                     curTable.CentreShotPlayerPos = curTable.ActivePos;
                 }
 
+                // one person win the game.
                 if (curPlayer?.Score >= 5) {
-                    curTable.GameStatus = GameStatus.WAITING;
+                    curTable.GameStatus = GameStatus.END;
+
+                    if (curTable.Red2TeamPos.Contains(curPlayer.Pos)) {
+                        curTable.Players.ForEach(p => {
+                            p.Score = -10;
+                        }); 
+
+                        curPlayer.Score = 30;
+
+
+                    } else {
+                        curTable.Players.ForEach(p => {
+                            p.Score = 10;
+                        }); 
+
+                        curPlayer.Score = -30;
+                    } 
+
                 } else {
                     // calculate our total socre.
                     int redScore = 0;
@@ -584,10 +598,42 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     });
 
                     if (redScore >= 5 || nonRedScore >= 5){
-                        curTable.GameStatus = GameStatus.WAITING;
-                        curTable.Players.ForEach(p => {
-                            p.Cards?.Clear();
-                        });
+                        curTable.GameStatus = GameStatus.END;
+                        if (redScore == 6) {
+                            curTable.Players.ForEach(p => {
+                                if (curTable.Red2TeamPos.Contains(p.Pos)) {
+                                    p.Score = 5;
+                                } else {
+                                    p.Score = -5;
+                                }
+                            });
+
+                        } else if (redScore == 7) {
+                           curTable.Players.ForEach(p => {
+                                if (curTable.Red2TeamPos.Contains(p.Pos)) {
+                                    p.Score = 10;
+                                } else {
+                                    p.Score = -10;
+                                }
+                            });
+
+                        } else if (nonRedScore == 6) {
+                           curTable.Players.ForEach(p => {
+                                if (curTable.Red2TeamPos.Contains(p.Pos)) {
+                                    p.Score = -5;
+                                } else {
+                                    p.Score = 5;
+                                }
+                            });
+                        } else if (nonRedScore == 7) {
+                           curTable.Players.ForEach(p => {
+                                if (curTable.Red2TeamPos.Contains(p.Pos)) {
+                                    p.Score = -10;
+                                } else {
+                                    p.Score = 10;
+                                }
+                            });
+                        }
                     }
                 }
             } else if(clientMessage.Action == "SKIP") {
@@ -599,10 +645,16 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             } 
 
             // WAITING clear all the cards.
-            if (curTable.GameStatus == GameStatus.WAITING) {
+            if (curTable.GameStatus == GameStatus.END) {
+                app.Logger.LogWarning("Game end, clear all data.");
                 curTable.Players.ForEach(p => {
-                        p.Cards = [];
+                    p.Cards = [];
+                    p.Status = PlayerStatus.SEATED;
+                    p.Message = $"Game ends, get {p.Score} Points.";
                 });
+                curTable.CentreShotPlayerPos = 0;
+                curTable.CentreCards = [];
+                curTable.Red2TeamPos.Clear();
             }
 
             app.Logger.LogInformation($"Current active post is {curTable.ActivePos}");
