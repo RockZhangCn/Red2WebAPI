@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
+using System.Security.Cryptography;
 
 namespace Red2WebAPI.Models
 {
@@ -28,7 +29,12 @@ namespace Red2WebAPI.Models
 
         //Temporary scheme.
         public static string CalcDigest(string password, string salt) {
-            return password + salt;
+            using (SHA1 sha1 = SHA1.Create())
+            {
+                var combined = password + salt;   
+                var hashBytes = sha1.ComputeHash(System.Text.Encoding.UTF8.GetBytes(combined));
+                return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+            }
         }
 
     }
