@@ -27,6 +27,8 @@ namespace Red2WebAPI.Models
 
         public required PlayerStatus Status { get; set; }
 
+        public int Score { get; set; } = 0;
+
         [JsonIgnore]
         [Required]
         public GameTable? GameTable{ get; set; }

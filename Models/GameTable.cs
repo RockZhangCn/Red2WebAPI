@@ -15,6 +15,12 @@ namespace Red2WebAPI.Models
         public List<Player> Players{ get; set; } = new List<Player>();
 
         public List<int> CentreCards { get; set; } = new List<int>();
+
+        public int? CentreShotPlayerPos { get; set;}
+
+        public int NextScore { get; set;} = 4;
+
+        public List<int> Red2TeamPos { get; set; } = new List<int>();
     }
 
     public enum GameStatus {

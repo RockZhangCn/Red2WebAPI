@@ -97,7 +97,6 @@ app.UseStatusCodePages(context =>
 // app.UseFileServer();
 // app.UseHsts();
 app.UseWebSockets();
-app.Logger.LogInformation("The app started");
 
 if (app.Environment.IsDevelopment())
 {
@@ -402,20 +401,20 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             if (curTable.ActivePos != null && !noNeedMoveOn) {
                 while(true) {
                     curTable.ActivePos = curTable.ActivePos % 4 + 1;
-                    bool getEndUser = false;
+                    bool getEndedUser = false;
                     curTable.Players.ForEach(p => {
                         if (p.Pos ==  curTable.ActivePos && p.Cards?.Count == 0) {
-                            getEndUser = true;
+                            getEndedUser = true;
                         }
                     });
 
-                    if (!getEndUser) {
+                    if (!getEndedUser) {
                         break;
                     }
                 }
 
                 if (curTable.ActivePos == prevActive) {
-                    app.Logger.LogInformation("Game end, we get the last user.");
+                    app.Logger.LogWarning("Game end, we get the last user, but it notified too late.");
                 }
             }
 
@@ -441,16 +440,17 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 context.Session.Remove("UserTableId");
                 context.Session.Remove("UserTablePos");
 
-         
                 if (curPlayer != null) {
-                    if (curTable.GameStatus != GameStatus.INPROGRESS) {
+                    if (curTable.GameStatus != GameStatus.WAITING) {
                         curTable.Players.Remove(curPlayer);
                     } else {
-                        curPlayer.AvatarId = 0;
+                        //curPlayer.AvatarId = 0;
                         if (curPlayer.Cards?.Count > 0) {
                             curTable.GameStatus = GameStatus.WAITING;
                         }
                     }
+
+                    curTable.Players.Remove(curPlayer);
                 }
                 
                 app.Logger.LogInformation($"----------------------Removed player at position {clientMessage.Pos} from table {clientMessage.TableIdx}.");
@@ -471,11 +471,14 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 // we are all ready.
                 if (notReadyPlayer == null && curTable.Players.Count == 4) {
                     app.Logger.LogInformation("AAAAAA We started the table game.");
-
+                    curTable.NextScore = 4;
                     var all_cards = Card.Shuffle();
                     curTable.Players.ForEach(p => {
                         int index = p.Pos - 1;
                         p.Cards = all_cards.Skip(index * 26).Take(26).ToList(); // Corrected assignment to List<int>
+                        if (p.Cards.Contains(48)) {
+                            curTable.Red2TeamPos.Add(p.Pos);
+                        }
                     });
 
                     foreach (var player in curTable.Players)
@@ -497,13 +500,16 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     }    
                 }
 
+                curTable.NextScore = 5;
                 if (curPlayer != null) {
+                    
                     curPlayer.Cards?.Add(48);
                     curPlayer.Cards?.Add(48);
                     app.Logger.LogInformation($"{curPlayer.Nickname} added red 2s");
                     curTable.ActivePos = curPlayer.Pos;
+                    curTable.Red2TeamPos = [curPlayer.Pos];
                 }
-
+                
                 curTable.GameStatus = GameStatus.INPROGRESS;
             } else if(clientMessage.Action == "NOGRAB") {
                 if (curPlayer != null) {
@@ -524,6 +530,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
                     if (shouldYield) {
                         curTable.GameStatus = GameStatus.YIELD2;
+                        curTable.NextScore = 5;
                     } else {
                         curTable.GameStatus = GameStatus.INPROGRESS;
                     }
@@ -534,20 +541,61 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 curTable.Players.ForEach(p => {
                     if (p.Pos == curPlayer?.Pos % 4 + 1) {
                         p.Cards?.Add(48);
+                        curTable.Red2TeamPos.Add(p.Pos);
                     }
                 });
-
+                curTable.NextScore = 4;
                 curTable.GameStatus = GameStatus.INPROGRESS;
             } else if(clientMessage.Action == "NOYIELD") {
                 curTable.GameStatus = GameStatus.INPROGRESS;
             } else if(clientMessage.Action == "SHOT") {
                 curTable.CentreCards = clientMessage.Cards;
+                curTable.CentreShotPlayerPos = clientMessage.Pos;
+                
                 foreach (var card in clientMessage.Cards) {
                     curPlayer?.Cards?.Remove(card);
+                }
+
+                if (curPlayer != null) {
+                    curPlayer.Message = $"Shot {clientMessage.Cards.Count} cards";
+                }
+
+                // calculate the Score.
+                if (curPlayer?.Cards?.Count == 0) {
+                    curPlayer.Score = curTable.NextScore;
+                    app.Logger.LogInformation("We shot finished earned score" + curPlayer.Score);
+                    curTable.NextScore--;
+                    // We have no cards, move the right to next active user.
+                    curTable.CentreShotPlayerPos = curTable.ActivePos;
+                }
+
+                if (curPlayer?.Score >= 5) {
+                    curTable.GameStatus = GameStatus.WAITING;
+                } else {
+                    // calculate our total socre.
+                    int redScore = 0;
+                    int nonRedScore = 0;
+                    curTable.Players.ForEach(p => {
+                        if (curTable.Red2TeamPos.Contains(p.Pos)) {
+                            redScore += p.Score;
+                        } else {
+                            nonRedScore += p.Score;
+                        }
+                    });
+
+                    if (redScore >= 5 || nonRedScore >= 5){
+                        curTable.GameStatus = GameStatus.WAITING;
+                        curTable.Players.ForEach(p => {
+                            p.Cards?.Clear();
+                        });
+                    }
                 }
             } else if(clientMessage.Action == "SKIP") {
                 // just switch to next.
                 app.Logger.LogInformation("User clicked SKIP");
+                if (curPlayer != null) {
+                    curPlayer.Message = $"Skip, Next.";
+                }
             } 
 
             // WAITING clear all the cards.
