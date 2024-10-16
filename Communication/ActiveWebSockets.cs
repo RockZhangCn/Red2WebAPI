@@ -1,6 +1,4 @@
 using System.Net.WebSockets;
-using System.Collections.Generic;
-using System.Threading;
 
 namespace Red2WebAPI.Communication
 {

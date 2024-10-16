@@ -115,6 +115,24 @@ app.UseWebSockets();
 
 app.MapGet("/", () => Results.Ok(new { Success=true, Message="Success."}));
 
+app.MapGet("/scores", async (HttpContext httpContext, UserDbContext db) => {
+     var userId = httpContext.Session.GetInt32("UserId");
+     
+     if (userId != null) {
+        var usersData = await db.Users
+            .Select(u => new {
+                u.Email, // Specify the columns you want
+                u.Score,
+            })
+            .ToListAsync();
+
+        return Results.Ok(new { Success=true, Data=usersData});
+     } else {
+        return Results.Ok(new { Success=false, Message="Unauthorized access."});
+     }
+});
+
+
 app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db, 
                                         GameTableDbContext gameTableDb) =>
 {
