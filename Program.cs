@@ -409,6 +409,10 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 continue;
             }
 
+            if (curTable.GameStatus == GameStatus.END) {
+                curTable.GameStatus = GameStatus.WAITING;
+                app.Logger.LogInformation("We switch game to WAITING due to last end.");
+            }
             // make sure we have the latest data. ROCKROCKZHANG
             await gameTableDb.Entry(curTable).Collection(t => t.Players).LoadAsync(); //
             
@@ -485,7 +489,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
                 if (curPlayer != null) {
                     if (curTable.GameStatus != GameStatus.WAITING) {
-                        app.Logger.LogWarning("We quit will exit total game. " + curPlayer.Cards?.Count);
+                        app.Logger.LogWarning("We quit will exit total game, we have " + curPlayer.Cards?.Count + " cards.");
                         curTable.GameStatus = GameStatus.END;
                     }
 
@@ -505,10 +509,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     curPlayer.Score = 0;
                 }
 
-                if (curTable.GameStatus == GameStatus.END) {
-                    curTable.GameStatus = GameStatus.WAITING;
-                    app.Logger.LogInformation("We switch game to WAITING due to last end.");
-                }
+
   
                 var notReadyPlayer = curTable.Players.FirstOrDefault(p => p.Status != PlayerStatus.READY);
                 // we are all ready.
@@ -619,8 +620,6 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                         }); 
 
                         curPlayer.Score = 30;
-
-
                     } else {
                         curTable.Players.ForEach(p => {
                             p.Score = 10;
@@ -628,7 +627,6 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
                         curPlayer.Score = -30;
                     } 
-
                 } else {
                     // calculate our total socre.
                     int redScore = 0;
@@ -693,8 +691,8 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             } 
 
             // WAITING clear all the cards.
-            if (curTable.GameStatus == GameStatus.END) {
-                app.Logger.LogWarning("Game end, clear all data.");
+            if (curTable.GameStatus == GameStatus.END) {     
+                app.Logger.LogWarning("***************************************Game end, clear all data.**************");
                 curTable.Players.ForEach(p => {
                     p.Cards = [];
                     p.Status = PlayerStatus.SEATED;
