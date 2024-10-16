@@ -133,6 +133,31 @@ app.MapGet("/scores", async (HttpContext httpContext, UserDbContext db) => {
 });
 
 
+app.MapGet("/profile", async (HttpContext httpContext, UserDbContext db) => {
+     var userId = httpContext.Session.GetInt32("UserId");
+     
+     if (userId != null) {
+        var user = db.Users.FirstOrDefault(u => u.Id == userId);
+
+        if (user != null) { 
+            var userData = new {
+                email=user.Email,
+                score=user.Score,
+                avatar=user.Avatar,
+                nickname=user.Nickname,
+                createtime=user.Createtime,
+
+            };
+            return Results.Ok(new { Success=true, Data=userData});
+        }
+     } 
+
+     return Results.Ok(new { Success=false, Message="Unauthorized access."});
+     
+});
+
+
+
 app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db, 
                                         GameTableDbContext gameTableDb) =>
 {
