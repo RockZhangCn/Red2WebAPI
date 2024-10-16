@@ -133,7 +133,7 @@ app.MapGet("/scores", async (HttpContext httpContext, UserDbContext db) => {
 });
 
 
-app.MapGet("/profile", async (HttpContext httpContext, UserDbContext db) => {
+app.MapGet("/profile", (HttpContext httpContext, UserDbContext db) => {
      var userId = httpContext.Session.GetInt32("UserId");
      
      if (userId != null) {
@@ -507,6 +507,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
 
                 if (curTable.GameStatus == GameStatus.END) {
                     curTable.GameStatus = GameStatus.WAITING;
+                    app.Logger.LogInformation("We switch game to WAITING due to last end.");
                 }
   
                 var notReadyPlayer = curTable.Players.FirstOrDefault(p => p.Status != PlayerStatus.READY);
@@ -702,6 +703,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 curTable.CentreShotPlayerPos = 0;
                 curTable.CentreCards = [];
                 curTable.Red2TeamPos.Clear();
+                curTable.ActivePos = null;
 
                 var userDbBuilder = new DbContextOptionsBuilder<UserDbContext>(); // Use DbContextOptionsBuilder
                 userDbBuilder.UseSqlite("Data Source=User.db");
@@ -715,6 +717,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     }
                 });
 
+                // save user score data
                 userDb.SaveChanges();
             }
 
@@ -726,7 +729,6 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             
             await BroadcastRoomStatus(app, tableId, gameTableDb);
         } else {
-
             var jsonObject = new
             {
                 Type = "PONG",
