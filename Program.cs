@@ -633,6 +633,10 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                                     p.Score = 10;
                                 }
                             });
+                        } else if (redScore == 5 || nonRedScore == 5) { // It's a draw.
+                            curTable.Players.ForEach(p => {
+                                p.Score = 0;
+                            });
                         }
                     }
                 }
@@ -655,6 +659,20 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 curTable.CentreShotPlayerPos = 0;
                 curTable.CentreCards = [];
                 curTable.Red2TeamPos.Clear();
+
+                var userDbBuilder = new DbContextOptionsBuilder<UserDbContext>(); // Use DbContextOptionsBuilder
+                userDbBuilder.UseSqlite("Data Source=User.db");
+                UserDbContext userDb = new UserDbContext(userDbBuilder.Options);
+
+                curTable.Players.ForEach(p => {
+                    var user = userDb.Users.FirstOrDefault(u => u.Id == p.UserId);
+                    if (user != null) {
+                        user.Score += p.Score;
+                        app.Logger.LogInformation($"User <{user.Email}> get new <{user.Score}> points");
+                    }
+                });
+
+                userDb.SaveChanges();
             }
 
             app.Logger.LogInformation($"Current active post is {curTable.ActivePos}");
