@@ -509,8 +509,6 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     curPlayer.Score = 0;
                 }
 
-
-  
                 var notReadyPlayer = curTable.Players.FirstOrDefault(p => p.Status != PlayerStatus.READY);
                 // we are all ready.
                 if (notReadyPlayer == null && curTable.Players.Count == 4) {
@@ -598,7 +596,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                 }
 
                 if (curPlayer != null) {
-                    curPlayer.Message = $"Shot {clientMessage.Cards.Count} cards";
+                    curPlayer.Message = $"Played {clientMessage.Cards.Count} cards";
                 }
 
                 // calculate the Score.
