@@ -6,7 +6,7 @@ using System.Text; // Added for Encoding
 using Red2WebAPI.Seed;
 using Red2WebAPI.Communication;
 using Cards;
-// var builder = WebApplication.CreateBuilder(args);
+using Microsoft.Extensions.Configuration.UserSecrets;
 
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -49,17 +49,15 @@ builder.Services.AddOpenApiDocument(config =>
 builder.Services.AddDistributedMemoryCache(); // 使用内存缓存
 builder.Services.AddSession(options =>
 {
-    options.IdleTimeout = TimeSpan.FromMinutes(300); // 设置过期时间
     options.Cookie.HttpOnly = true; // 只能通过 HTTP 访问
     options.Cookie.IsEssential = true; // 在 GDPR 下的设置
+
+    options.IdleTimeout = TimeSpan.FromDays(1); // 设
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
 });
 
 builder.Services.AddLogging();
 builder.Logging.AddConsole(); // Add this line to configure console logging
-
-// // Add ILogger service to the DI container
-// builder.Services.AddSingleton<ILogger<YourClassName>>(provider => 
-//     provider.GetRequiredService<ILoggerFactory>().CreateLogger<YourClassName>());
 
 builder.Services.AddControllersWithViews()
     .AddJsonOptions(options =>
@@ -93,8 +91,8 @@ app.UseStatusCodePages(context =>
     return Task.CompletedTask; // For other status codes, do nothing
 });
 
-// app.UseFileServer();
-// app.UseHsts();
+
+app.UseSession();
 app.UseWebSockets();
 
 if (app.Environment.IsDevelopment())
@@ -108,10 +106,6 @@ if (app.Environment.IsDevelopment())
         config.DocExpansion = "list";
     });
 }
-
-app.UseSession();
-app.UseWebSockets();
-
 
 app.MapGet("/", () => Results.Ok(new { Success=true, Message="Success."}));
 
@@ -135,7 +129,7 @@ app.MapGet("/scores", async (HttpContext httpContext, UserDbContext db) => {
 
 app.MapGet("/profile", (HttpContext httpContext, UserDbContext db) => {
      var userId = httpContext.Session.GetInt32("UserId");
-     
+     app.Logger.LogInformation("profile request get userId" + userId);
      if (userId != null) {
         var user = db.Users.FirstOrDefault(u => u.Id == userId);
 
@@ -204,26 +198,27 @@ app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db,
             };       
        
         if (httpContext != null) {
-            ActiveWebSockets.RemoveSocket(httpContext.Session.GetInt32("UserId")?? 0);
+
+            var userId = httpContext.Session.GetInt32("UserId");
+            ActiveWebSockets.RemoveSocket(userId?? 0);
             
             // clear your position in database.
-            var userTable = httpContext.Session.GetInt32("UserTableId");
-            var userPos = httpContext.Session.GetInt32("UserTablePos");
-            if (userTable.HasValue && userPos.HasValue) {
-                var userId = httpContext.Session.GetInt32("UserId");
-                var oldTable = await gameTableDb.Tables.FirstOrDefaultAsync(table => table.TableId == userTable);
+            var userTable = getTableId(userId??0, gameTableDb);
 
-                if (oldTable != null) {
-                    // Ensure the players are fetched from the database after any changes
-                    await gameTableDb.Entry(oldTable).Collection(t => t.Players).LoadAsync(); // Load players again
-                }
-                // Check if table is not null before accessing Players
-                var oldPlayer = oldTable?.Players?.Find(p => p.Pos == userPos);
-                
-                if (oldPlayer != null) {
-                    app.Logger.LogInformation("----------- User logout, we clear position " + userTable + "" + userPos);
-                    oldTable?.Players?.Remove(oldPlayer);
-                }
+            var userPos = getTablePos(userId??0, gameTableDb);
+
+            var oldTable = await gameTableDb.Tables.FirstOrDefaultAsync(table => table.TableId == userTable);
+
+            if (oldTable != null) {
+                // Ensure the players are fetched from the database after any changes
+                await gameTableDb.Entry(oldTable).Collection(t => t.Players).LoadAsync(); // Load players again
+            }
+            // Check if table is not null before accessing Players
+            var oldPlayer = oldTable?.Players?.Find(p => p.Pos == userPos);
+            
+            if (oldPlayer != null) {
+                app.Logger.LogInformation("----------- User logout, we clear position " + userTable + "" + userPos);
+                oldTable?.Players?.Remove(oldPlayer);
             }
             // clear End.
             app.Logger.LogInformation("We logout now");
@@ -299,6 +294,7 @@ app.MapPost("/login", async (HttpContext httpContext, UserDbContext db) =>
             };
             
             httpContext.Session.SetInt32("UserId", user.Id);
+            app.Logger.LogInformation("Write user Id in session " + user.Id + "  get it " + httpContext.Session.GetInt32("UserId"));
             httpContext.Session.SetInt32("UserAvatar", user.Avatar);
             httpContext.Session.SetString("UserNickname", user.Nickname);
             return Results.Ok(userDtoSuccess);
@@ -358,8 +354,7 @@ app.Map("/ws_playing", async (HttpContext context, GameTableDbContext db) => // 
 {
     if (context.WebSockets.IsWebSocketRequest)
     {
-        using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-
+        var webSocket = await context.WebSockets.AcceptWebSocketAsync();
         await RoomWebSocketHandler(app, context, webSocket, db);
     }
     else
@@ -367,6 +362,18 @@ app.Map("/ws_playing", async (HttpContext context, GameTableDbContext db) => // 
         context.Response.StatusCode = 400; // Bad Request if not a WebSocket request
     }
 });
+
+
+static int getTableId(int UserId, GameTableDbContext db) {
+    var player = db.Players.FirstOrDefault(p => p.UserId == UserId);
+    return player?.TableId??0;
+}
+
+static int getTablePos(int UserId, GameTableDbContext db) {
+    var player = db.Players.FirstOrDefault(p => p.UserId == UserId);
+    return player?.Pos??0;
+}
+
 
 static async Task RoomWebSocketHandler(WebApplication app, HttpContext context, 
                                     WebSocket webSocket, GameTableDbContext gameTableDb1)
@@ -467,25 +474,21 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
             }
 
             if(clientMessage.Action == "IAMIN") {
-                // added to ROOM broacast.
-                var currentTableId = context.Session.GetInt32("UserTableId");
-                var currentPosId = context.Session.GetInt32("UserTablePos");
-                var userId = context.Session.GetInt32("UserId");
+                var currentTableId = clientMessage.TableIdx;
+                var currentPosId = clientMessage.Pos;
+
+                app.Logger.LogWarning($"Table Id is {currentTableId} pos id is {currentPosId}");
                 var avatar =  context.Session.GetInt32("UserAvatar");
                 var nickName = context.Session.GetString("UserNickname");
 
-                if (currentTableId.HasValue && currentPosId.HasValue) {
-                    PlayingWebSockets.AddSocket(currentTableId.Value, currentPosId.Value, webSocket);
-                }
+                
+                PlayingWebSockets.AddSocket(currentTableId, currentPosId, webSocket);
+                
                 app.Logger.LogInformation($"ws_playing {nickName} PlayingWebSockets<{PlayingWebSockets.Count}> addED websocket for table {currentTableId} pos {currentPosId} END.");
 
                 // The user take seat have added the Player, so we don't need add player here.
             } else if (clientMessage.Action == "IAMQUIT") { //backforward.
                 app.Logger.LogInformation($"ws_playing some user {clientMessage.TableIdx} {clientMessage.Pos} exit the room");
-
-                // Clear data in session.
-                context.Session.Remove("UserTableId");
-                context.Session.Remove("UserTablePos");
 
                 if (curPlayer != null) {
                     if (curTable.GameStatus != GameStatus.WAITING) {
@@ -750,46 +753,41 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
         }
     }
 
-    var currentTable = context.Session.GetInt32("UserTableId");
-    var currentPos = context.Session.GetInt32("UserTablePos");
-    
-    if (currentTable.HasValue && currentPos.HasValue) {
+    var userId = context.Session.GetInt32("UserId");
+    var currentTable = getTableId(userId??0, gameTableDb);
+    var currentPos = getTablePos(userId??0, gameTableDb);
 
-        gameTableDb = new GameTableDbContext(optionsBuilder.Options); 
-        // If user directly close the tab, there will be no IAMQUIT message.
-        app.Logger.LogWarning("User Close/Refresh Tab RoomWebSocketHandler close websocket table " + $"{currentTable} pos {currentPos}");
-        PlayingWebSockets.RemoveSocket(currentTable.Value, currentPos.Value);
+    gameTableDb = new GameTableDbContext(optionsBuilder.Options); 
+    // If user directly close the tab, there will be no IAMQUIT message.
+    app.Logger.LogWarning("User Close/Refresh Tab RoomWebSocketHandler close websocket table " + $"{currentTable} pos {currentPos}");
+    PlayingWebSockets.RemoveSocket(currentTable, currentPos);
 
-        var curTable = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == currentTable.Value);
-        if (curTable == null) {
-            app.Logger.LogError("We received incorrect table");
-            return;
-        }
-
-        // make sure we have the latest data. ROCKROCKZHANG
-        await gameTableDb.Entry(curTable).Collection(t => t.Players).LoadAsync(); //
-
-        var curPlayer = curTable.Players.FirstOrDefault(p => p.Pos == currentPos.Value); // Find the player by position
-        if (curPlayer == null) {
-            app.Logger.LogError("We received incorrect pos");
-            return;
-        }
-
-        curTable.Players.Remove(curPlayer); // Remove the player from the Players collection
-        app.Logger.LogInformation($"----------------------Removed player {curPlayer.Nickname} at position {currentPos.Value} from table {currentTable.Value}.");
-        gameTableDb.SaveChanges();
-
-        // Clear data in session.
-        context.Session.Remove("UserTableId");
-        context.Session.Remove("UserTablePos");
-
-        var optionsBuilder1 = new DbContextOptionsBuilder<GameTableDbContext>(); // Use DbContextOptionsBuilder
-        optionsBuilder1.UseInMemoryDatabase("GameTable"); // Configure the in-memory database
-        var gameTableDb2 = new GameTableDbContext(optionsBuilder.Options); // Pass the configured options
-        await BroadcastRoomStatus(app, currentTable.Value, gameTableDb2);    
-
-        await BroadCastHallStatus(gameTableDb2, app.Logger);
+    var curTableObj = await gameTableDb.Tables.FirstOrDefaultAsync(t => t.Id == currentTable);
+    if (curTableObj == null) {
+        app.Logger.LogError("We received incorrect table");
+        return;
     }
+
+    // make sure we have the latest data. ROCKROCKZHANG
+    await gameTableDb.Entry(curTableObj).Collection(t => t.Players).LoadAsync(); //
+
+    var curPlayerObj = curTableObj.Players.FirstOrDefault(p => p.Pos == currentPos); // Find the player by position
+    if (curPlayerObj == null) {
+        app.Logger.LogError("We received incorrect pos");
+        return;
+    }
+
+    curTableObj.Players.Remove(curPlayerObj); // Remove the player from the Players collection
+    app.Logger.LogInformation($"----------------------Removed player {curPlayerObj.Nickname} at position {currentPos} from table {currentTable}.");
+    gameTableDb.SaveChanges();
+
+    var optionsBuilder1 = new DbContextOptionsBuilder<GameTableDbContext>(); // Use DbContextOptionsBuilder
+    optionsBuilder1.UseInMemoryDatabase("GameTable"); // Configure the in-memory database
+    var gameTableDb2 = new GameTableDbContext(optionsBuilder.Options); // Pass the configured options
+    await BroadcastRoomStatus(app, currentTable, gameTableDb2);    
+
+    await BroadCastHallStatus(gameTableDb2, app.Logger);
+
 }
 
 // GamePanel broadcast data.
@@ -799,7 +797,7 @@ app.Map("/ws_hall", async (HttpContext context, GameTableDbContext db) => // Add
 {
     if (context.WebSockets.IsWebSocketRequest)
     {
-        using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+        var webSocket = await context.WebSockets.AcceptWebSocketAsync();
 
         ActiveWebSockets.AddSocket(context.Session.GetInt32("UserId")?? 0, webSocket);
         
@@ -867,8 +865,6 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
                     app.Logger.LogInformation("+++++++++++BigHall We add player " + clientMessage.NickName + " to table " + tableIdx);
                     table.Players.Add(newPlayer);
 
-                    context.Session.SetInt32("UserTableId", tableIdx);
-                    context.Session.SetInt32("UserTablePos", pos);
                     app.Logger.LogInformation("We saved new position " + tableIdx + " - " + pos + " END.");
                     
                     gameTableDb.SaveChanges();
@@ -923,9 +919,6 @@ static async Task BigHallWebSocketHandler(WebApplication app, HttpContext contex
 
     // Client close it's socket here.
     ActiveWebSockets.RemoveSocket(context.Session.GetInt32("UserId")?? 0);
-    var userTable1 = context.Session.GetInt32("UserTableId");
-    var userPos1 = context.Session.GetInt32("UserTablePos");
-    app.Logger.LogInformation("User close the bighall websocket into table " + userTable1 + " pos " + userPos1);
     gameTableDb = new GameTableDbContext(optionsBuilder.Options); // Pass the configured options
     await BroadCastHallStatus(gameTableDb, app.Logger);
 }
@@ -972,3 +965,4 @@ static async Task BroadCastHallStatus(GameTableDbContext gameTableDb, ILogger lo
 Extensions.CreateDbIfNotExists(app);
 
 app.Run();
+
