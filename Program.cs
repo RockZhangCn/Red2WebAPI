@@ -150,8 +150,6 @@ app.MapGet("/profile", (HttpContext httpContext, UserDbContext db) => {
      
 });
 
-
-
 app.MapPost("/logout", async (HttpContext httpContext, UserDbContext db, 
                                         GameTableDbContext gameTableDb) =>
 {
@@ -527,6 +525,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     });
 
                     curTable.GameStatus = GameStatus.GRAB2;
+                    curTable.CentreCards.Clear();
 
                     Random random = new Random(); // Create a new instance of Random
                     curTable.ActivePos = random.Next(1, 5); // Generate a random number between 1 and 4 (inclusive)
@@ -549,12 +548,14 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     app.Logger.LogInformation($"{curPlayer.Nickname} added red 2s");
                     curTable.ActivePos = curPlayer.Pos;
                     curTable.Red2TeamPos.Add(curPlayer.Pos);
+                    curPlayer.Message = "Grab2, I'm the single.";
                 }
                 
                 curTable.GameStatus = GameStatus.INPROGRESS;
             } else if(clientMessage.Action == "NOGRAB") {
                 if (curPlayer != null) {
                     curPlayer.Status = PlayerStatus.NOGRAB;
+                    curPlayer.Message = $"NoGrab, Next.";
                 }
 
                 var nograbUsers = curTable.Players.FindAll(x => x.Status == PlayerStatus.NOGRAB);
@@ -700,7 +701,7 @@ static async Task RoomWebSocketHandler(WebApplication app, HttpContext context,
                     p.Message = $"Game ends, get {p.Score} Points.";
                 });
                 curTable.CentreShotPlayerPos = 0;
-                curTable.CentreCards = [];
+                curTable.CentreCards.Clear();
                 curTable.Red2TeamPos.Clear();
                 curTable.ActivePos = null;
 
