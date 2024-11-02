@@ -13,6 +13,12 @@ namespace Red2WebAPI.Models
 
         public DbSet<User> Users => Set<User>();
 
+        // protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        // {
+        //     optionsBuilder.UseMySql("Server=localhost;Database=mydb;User=root;Password=ComplicatedPasswdISHere.;", 
+        //         new MySqlServerVersion(new Version(8, 0, 2))); // 根据 MySQL 版本指定
+        // }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

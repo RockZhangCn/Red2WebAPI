@@ -25,7 +25,15 @@ Console.WriteLine($"WebRootPath: {builder.Environment.WebRootPath}");
 
 builder.WebHost.UseUrls("http://0.0.0.0:8003");
 
-builder.Services.AddSqlite<UserDbContext>("Data Source=User.db");
+//builder.Services.AddSqlite<UserDbContext>("Data Source=User.db");
+    
+builder.Services.AddDbContext<UserDbContext>(options =>
+    options.UseMySql(
+        builder.Configuration.GetConnectionString("DefaultConnection"), 
+        new MySqlServerVersion(new Version(8, 0, 23))
+    )
+);
+
 builder.Services.AddDbContext<GameTableDbContext>(opt => opt.UseInMemoryDatabase("GameTable"));
 
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
